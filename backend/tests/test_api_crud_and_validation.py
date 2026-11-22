@@ -359,3 +359,42 @@ def test_database_transaction_is_rolled_back_on_error(as_role):
         assert session.scalar(
             select(InfrastructureAsset).where(InfrastructureAsset.id == asset["id"])
         ) is not None
+
+
+def test_analytics_csv_export_for_every_kind(as_role):
+    """Regression: the incidents export called a service helper that never existed,
+    so the whole endpoint answered 500. Every advertised kind must produce CSV."""
+    analyst = as_role("city_analyst")
+    for kind in ("overview", "categories", "incidents", "tasks", "recovery", "simulations"):
+        response = analyst.get(f"/api/analytics/export?kind={kind}")
+        assert response.status_code == 200, (kind, response.text)
+        assert response.headers["content-type"].startswith("text/csv")
+        body = response.text
+        assert "," in body or body.strip() == "no data", (kind, body[:200])
+        assert 'filename="symbiotic-city-' in response.headers["content-disposition"]
+
+
+def test_analytics_export_rejects_unknown_kind(as_role):
+    analyst = as_role("city_analyst")
+    response = analyst.get("/api/analytics/export?kind=secrets")
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_export"
+
+
+def test_second_open_incident_for_same_asset_is_refused(as_role):
+    """Idempotency guard: an operator cannot open a duplicate incident for the
+    same asset and category while the first one is still open."""
+    operator = as_role("city_operator")
+    payload = {
+        "title": "Duplicate guard probe",
+        "description": "first",
+        "category": "power_outage",
+        "severity": "high",
+        "primary_asset_id": 6,
+    }
+    first = operator.post("/api/incidents", json=payload)
+    assert first.status_code == 201, first.text
+    second = operator.post("/api/incidents", json={**payload, "title": "Duplicate guard probe 2"})
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "duplicate_incident"
+    assert second.json()["error"]["details"]["incident_code"] == first.json()["data"]["code"]
