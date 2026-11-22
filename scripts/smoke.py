@@ -12,8 +12,18 @@ Usage:
     python3 scripts/smoke.py http://host:3000/api # through the console proxy
 
 Exit code is 0 only when every step behaves as documented. Requires a seeded
-database and the demo accounts. Safe to re-run: it creates a new incident each
-time and never mutates seeded history.
+database and the demo accounts.
+
+Re-runnable: each run drives its own plan through to completion, which turns its
+reservations into `consumed` rather than `reserved`, so capacity is released as
+the work is verified. Verified by four consecutive runs on one fresh database
+(26/26 every time).
+
+A run that is interrupted after approval -- or an approval whose tasks are never
+completed -- leaves its reservations `reserved`, and those genuinely hold
+capacity. A later plan can then be infeasible for a real reason. Reset with
+`FORCE=1 ./scripts/seed.sh` (SQLite) or release the reservations through
+`POST /api/resources/reservations/{id}/release` as an admin.
 
 Line endings: written as UTF-8; the arrow glyphs are cosmetic.
 """
