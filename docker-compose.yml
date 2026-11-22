@@ -1,0 +1,58 @@
+#  SYMBIOTIC CITY — local production-shaped stack.
+#
+#    cp .env.example .env
+#    docker compose up --build
+#    open http://localhost:3000
+#
+#  The API seeds the synthetic Aurora Vale dataset on first boot
+#  (SEED_DEMO_DATA=1), so there is no manual data step.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-symbiotic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-symbiotic}
+      POSTGRES_DB: ${POSTGRES_DB:-symbiotic_city}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-symbiotic} -d ${POSTGRES_DB:-symbiotic_city}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-symbiotic}:${POSTGRES_PASSWORD:-symbiotic}@db:5432/${POSTGRES_DB:-symbiotic_city}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-please-use-a-long-random-string}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-1}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    environment:
+      BACKEND_URL: http://api:8000
+      NEXT_PUBLIC_APP_NAME: SYMBIOTIC CITY
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

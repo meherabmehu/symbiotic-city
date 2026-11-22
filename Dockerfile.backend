@@ -1,0 +1,43 @@
+#  FastAPI backend image.
+#  Multi-stage is unnecessary here, but the venv is kept separate so the runtime
+#  layer never carries a compiler toolchain.
+FROM python:3.11-slim AS build
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential libpq-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY backend/requirements.txt ./requirements.txt
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install -r requirements.txt
+
+FROM python:3.11-slim
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libpq5 curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --uid 10001 appuser
+
+COPY --from=build /opt/venv /opt/venv
+WORKDIR /app
+COPY backend/ ./
+COPY scripts/ ./scripts/
+COPY alembic.ini ./
+COPY migrations ./migrations
+
+RUN mkdir -p /app/data && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
