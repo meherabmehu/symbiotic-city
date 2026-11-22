@@ -1,0 +1,209 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * SYMBIOTIC CITY design system.
+ *
+ * Reference: the supplied Canva design (SYMBIOTIC CITY UI/UX). The tokens below
+ * are the extracted visual language: deep navy command surface, glass panels
+ * with hairline borders, cyan primary accent, mint/amber/coral status ramp,
+ * condensed display type over a neutral sans, and a green "LIVE DIGITAL TWIN •
+ * SYNCED" status pill in the top bar.
+ */
+
+:root {
+  --font-display: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --surface: #061225;
+  --surface-raised: rgba(11, 30, 58, 0.72);
+  --hairline: rgba(143, 179, 212, 0.16);
+  --accent: #45d8f5;
+}
+
+* {
+  border-color: var(--hairline);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-navy-950 text-ink-100 antialiased;
+  font-family: var(--font-sans);
+  background-image:
+    radial-gradient(900px 480px at 12% -8%, rgba(69, 216, 245, 0.13), transparent 60%),
+    radial-gradient(700px 420px at 88% 4%, rgba(62, 230, 165, 0.09), transparent 55%),
+    linear-gradient(180deg, #040b18 0%, #05101f 40%, #040b18 100%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(69, 216, 245, 0.28);
+}
+
+/* Visible, consistent keyboard focus everywhere. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-white/10 bg-navy-850/70 shadow-glass backdrop-blur-xl;
+  }
+
+  .glass-tight {
+    @apply rounded-xl border border-white/10 bg-navy-850/60 backdrop-blur-md;
+  }
+
+  .panel {
+    @apply glass p-5;
+  }
+
+  .panel-title {
+    @apply font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-300;
+  }
+
+  .stat-value {
+    @apply font-display text-3xl font-semibold tracking-tight text-white;
+  }
+
+  .muted {
+    @apply text-sm text-ink-400;
+  }
+
+  .hairline {
+    @apply border-t border-white/10;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-ink-300
+      transition-colors hover:bg-white/5 hover:text-white focus-visible:bg-white/5;
+  }
+
+  .nav-item-active {
+    @apply bg-accent/10 text-white shadow-[inset_0_0_0_1px_rgba(69,216,245,0.28)];
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold
+      transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-navy-950 hover:bg-accent-soft hover:shadow-glow
+      active:translate-y-px;
+  }
+
+  .btn-secondary {
+    @apply btn border border-white/15 bg-white/5 text-ink-100 hover:border-accent/40 hover:bg-white/10;
+  }
+
+  .btn-ghost {
+    @apply btn text-ink-300 hover:bg-white/5 hover:text-white;
+  }
+
+  .btn-danger {
+    @apply btn border border-coral/40 bg-coral/10 text-coral hover:bg-coral/20;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-white/10 bg-navy-900/70 px-3.5 py-2.5 text-sm text-white
+      placeholder:text-ink-500 focus:border-accent/60 focus:bg-navy-900 focus:outline-none
+      focus:ring-2 focus:ring-accent/25 disabled:opacity-60;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-ink-400;
+  }
+
+  .field-error {
+    @apply mt-1 text-xs font-medium text-coral;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold
+      uppercase tracking-wider;
+  }
+
+  .table-shell {
+    @apply w-full overflow-x-auto rounded-2xl border border-white/10;
+  }
+
+  .data-table {
+    @apply w-full min-w-[720px] border-collapse text-left text-sm;
+  }
+
+  .data-table thead th {
+    @apply sticky top-0 z-10 bg-navy-900/95 px-4 py-3 text-[11px] font-semibold uppercase
+      tracking-[0.14em] text-ink-400 backdrop-blur;
+  }
+
+  .data-table tbody td {
+    @apply border-t border-white/5 px-4 py-3 align-middle text-ink-100;
+  }
+
+  .data-table tbody tr {
+    @apply transition-colors hover:bg-white/[0.04];
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5
+      px-2.5 py-1 text-xs text-ink-200;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-white/5;
+  }
+
+  .notice {
+    @apply rounded-xl border px-4 py-3 text-sm;
+  }
+
+  .link {
+    @apply font-medium text-accent underline-offset-4 hover:underline;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background: rgba(143, 179, 212, 0.25);
+    border-radius: 999px;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .sr-only-focusable:focus {
+    @apply not-sr-only fixed left-4 top-4 z-50 rounded-lg bg-accent px-4 py-2 text-navy-950;
+  }
+}
+
+/* Respect reduced motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
