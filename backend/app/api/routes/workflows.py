@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, Pagination, require_permissions
 from app.core.responses import ApiError, ok, paginated
@@ -56,6 +57,19 @@ def start_workflow(
     incident = db.get(Incident, incident_id)
     if incident is None:
         raise ApiError("Incident not found.", status_code=404, code="not_found")
+    active = db.scalar(
+        select(WorkflowInstance).where(
+            WorkflowInstance.incident_id == incident.id,
+            WorkflowInstance.status.in_(["running", "awaiting_approval", "awaiting_field"]),
+        )
+    )
+    if active:
+        raise ApiError(
+            f"{active.code} is already driving this incident. Retry or resume it instead of starting a second workflow.",
+            status_code=409,
+            code="workflow_exists",
+            details={"workflow_id": active.id, "code": active.code},
+        )
     if incident.status not in (IncidentStatus.REPORTED, IncidentStatus.VERIFIED):
         raise ApiError(
             "A workflow can only be started for a reported or verified incident.",
@@ -67,7 +81,6 @@ def start_workflow(
 
     run = db.get(SimulationRun, simulation_run_id) if simulation_run_id else None
     if fail_at_step:
-        # pre-register the workflow so the fault can be attached to its id
         workflow = engine.WorkflowInstance(
             code=engine.next_workflow_code(db),
             workflow_type="recovery",
@@ -83,16 +96,24 @@ def start_workflow(
         db.flush()
         engine.simulate_failure_at(workflow.id, fail_at_step)
         try:
-            engine.start_recovery_workflow(
-                db, incident=incident, simulation_run=run, plan=plan, actor_id=user.id
+            workflow = engine.start_recovery_workflow(
+                db,
+                incident=incident,
+                simulation_run=run,
+                plan=plan,
+                actor_id=user.id,
+                adopt_id=workflow.id,
             )
         except ApiError as exc:
-            db.rollback()
+            # The injected failure is a controlled demonstration, not a bug: the
+            # workflow is left persisted in its failed state (with compensation
+            # applied) so the UI can show the rollback and offer a retry.
+            db.commit()
             raise ApiError(
                 exc.message,
                 status_code=status.HTTP_409_CONFLICT,
                 code=exc.code,
-                details={"fault_injected": fail_at_step},
+                details={"fault_injected": fail_at_step, "workflow_id": workflow.id},
             ) from exc
     else:
         workflow = engine.start_recovery_workflow(
@@ -153,6 +174,26 @@ def inject_failure(
     workflow = db.get(WorkflowInstance, workflow_id)
     if workflow is None:
         raise ApiError("Workflow not found.", status_code=404, code="not_found")
+    # Validate the step name early so an operator cannot schedule a no-op fault.
+    from app.workflows.engine import STEP_LABELS
+
+    if step not in STEP_LABELS:
+        raise ApiError("Unknown workflow step.", status_code=422, code="invalid_step")
+    from app.models.workflow import WorkflowEvent
+
+    already_done = db.scalar(
+        select(WorkflowEvent).where(
+            WorkflowEvent.workflow_id == workflow_id,
+            WorkflowEvent.step == step,
+            WorkflowEvent.outcome == "succeeded",
+        )
+    )
+    if already_done:
+        raise ApiError(
+            f"'{step}' has already completed for this workflow; schedule the fault on a pending step.",
+            status_code=409,
+            code="step_already_completed",
+        )
     engine.simulate_failure_at(workflow_id, step)
     audit.record(
         db, action="workflow.fault_injected", actor=user, resource_type="workflow_instance",
