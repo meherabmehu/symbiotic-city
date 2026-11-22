@@ -44,6 +44,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      # next.config.mjs resolves its rewrites during the build, so the proxy
+      # target has to be baked in here as well as supplied at runtime.
+      args:
+        BACKEND_URL: http://api:8000
     environment:
       BACKEND_URL: http://api:8000
       NEXT_PUBLIC_APP_NAME: SYMBIOTIC CITY

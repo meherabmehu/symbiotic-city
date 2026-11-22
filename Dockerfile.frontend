@@ -1,6 +1,12 @@
 #  Next.js frontend image.
-#  The browser only talks to this container; /api/* is rewritten to BACKEND_URL
-#  by next.config.mjs, so no client-side CORS configuration is needed.
+#
+#  The build context is the repository root (see docker-compose.yml), so every
+#  source path is prefixed with frontend/. The previous version copied
+#  frontend/ into /app and then copied /app/package.json from the build stage,
+#  which only existed one directory deeper, so the image layout was wrong.
+#
+#  BACKEND_URL is read by next.config.mjs when rewrites are evaluated, i.e. at
+#  build time, so it is passed as a build argument as well as a runtime variable.
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
@@ -9,6 +15,8 @@ RUN npm ci
 FROM node:20-alpine AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ARG BACKEND_URL=http://api:8000
+ENV BACKEND_URL=${BACKEND_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
 RUN npm run build
