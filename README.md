@@ -106,7 +106,7 @@ Demo accounts (synthetic, seeded on first boot):
 ## Verify it
 
 ```bash
-./scripts/verify.sh          # alembic up/down, 95 backend tests, tsc, next build
+./scripts/verify.sh          # alembic up/down, 105 backend tests, tsc, next build
 ./scripts/verify.sh backend  # just the API surface
 python3 scripts/smoke.py     # live end-to-end flow against a running stack
 ```
@@ -126,7 +126,8 @@ backend/
     models/          30 tables across identity, infrastructure, operations,
                      simulation, optimization, workflow, system
   migrations/        Alembic revisions (env.py renders custom UTCDateTime)
-  tests/             95 tests: engines, API contract, RBAC, workflow e2e
+  tests/             105 tests: engines, API contract, RBAC, workflow e2e,
+                     migrations, PostgreSQL parity
 frontend/
   app/               24 routes: landing, auth, shell, and every operational screen
   components/        ui primitives, city twin canvas, charts, layout
