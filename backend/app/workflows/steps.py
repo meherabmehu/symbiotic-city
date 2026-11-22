@@ -503,4 +503,24 @@ def incident_resolved(ctx: "WorkflowContext") -> tuple[str, dict]:
             message="Workflow closed the incident after verified repairs.",
             actor_id=ctx.actor_id,
         )
+        # A resolution performed by the workflow is still an incident transition,
+        # so it has to appear in the audit trail with the actor who triggered it —
+        # an auto-closed incident must never be unattributable.
+        _audit_transition(ctx, incident, previous=previous)
     return (f"{incident.code} resolved.", {"incident_id": incident.id})
+
+
+def _audit_transition(ctx: "WorkflowContext", incident, *, previous: str) -> None:
+    from app.models.identity import User
+    from app.services import audit
+
+    actor = ctx.db.get(User, ctx.actor_id) if ctx.actor_id else None
+    audit.record(
+        ctx.db,
+        action="incident.transition",
+        actor=actor,
+        resource_type="incident",
+        resource_id=incident.id,
+        message=f"{incident.code} {previous} -> resolved by recovery workflow.",
+        metadata={"workflow_id": ctx.workflow.id, "source": "workflow"},
+    )

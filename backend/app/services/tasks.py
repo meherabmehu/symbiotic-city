@@ -343,6 +343,10 @@ def _sync_workflow_after_transition(
         )
     if target != TaskStatus.VERIFIED:
         return
+    # The session runs with autoflush disabled, so the row just changed above is
+    # still dirty: without this flush the count below sees the task as open and
+    # the workflow never learns that the field work is finished.
+    db.flush()
     open_tasks = db.scalar(
         select(func.count())
         .select_from(RepairTask)
@@ -356,10 +360,13 @@ def _sync_workflow_after_transition(
     sync_workflow_step(
         db, incident_id=task.incident_id, step="repair_verified", actor_id=actor_id
     )
+    # Between dispatch and the last verification the workflow is parked at
+    # "awaiting_field", not "running"; only a terminal or failed workflow means
+    # this incident has nothing left to advance.
     workflow = db.scalar(
         select(WorkflowInstance).where(
             WorkflowInstance.incident_id == task.incident_id,
-            WorkflowInstance.status == "running",
+            WorkflowInstance.status.in_(["running", "awaiting_field"]),
         )
     )
     if workflow is None:

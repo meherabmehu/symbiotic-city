@@ -122,17 +122,29 @@ def test_full_recovery_demonstration(client, as_role):
                 )
                 assert verified.status_code == 200, verified.text
 
-    # 16-17: infrastructure status returns to operational and the incident closes
-    resolved = operator.post(
-        f"/api/incidents/{incident_id}/transition",
-        json={
-            "status": "resolved",
-            "note": "All repairs verified",
-            "resolution_notes": "Feeder restored and load confirmed normal.",
-        },
+    # 16-17: infrastructure status returns to operational and the incident closes.
+    # Verifying the last task lets the workflow resolve the incident itself; the
+    # manual transition is only needed when no workflow is driving it.
+    incident = operator.get(f"/api/incidents/{incident_id}").json()["data"]
+    if incident["status"] != "resolved":
+        resolved = operator.post(
+            f"/api/incidents/{incident_id}/transition",
+            json={
+                "status": "resolved",
+                "note": "All repairs verified",
+                "resolution_notes": "Feeder restored and load confirmed normal.",
+            },
+        )
+        assert resolved.status_code == 200, resolved.text
+        incident = resolved.json()["data"]
+    assert incident["status"] == "resolved"
+
+    # and resolving twice is refused rather than silently duplicated
+    replayed = operator.post(
+        f"/api/incidents/{incident_id}/transition", json={"status": "resolved"}
     )
-    assert resolved.status_code == 200, resolved.text
-    assert resolved.json()["data"]["status"] == "resolved"
+    assert replayed.status_code == 409
+    assert replayed.json()["error"]["code"] == "no_status_change"
     asset_after = operator.get(f"/api/infrastructure/{power_station['id']}").json()["data"]
     assert asset_after["status"] in ("operational", "degraded")
 
@@ -156,6 +168,68 @@ def test_full_recovery_demonstration(client, as_role):
         "task.transition",
         "incident.transition",
     } <= actions
+
+
+def test_verifying_the_last_task_closes_the_workflow_without_a_manual_resolve(client, as_role):
+    """The field workspace must be able to finish the loop on its own.
+
+    Regression: the join from task verification back into orchestration only
+    looked for a workflow in status "running", but dispatch leaves it parked at
+    "awaiting_field", so verifying every task silently failed to advance the
+    workflow and the incident stayed in_progress forever.
+    """
+    operator = as_role("city_operator")
+    engineers = (as_role("field_engineer"), as_role("field_engineer_2"))
+    asset = _asset(operator, "SS-01")
+    incident = operator.post(
+        "/api/incidents",
+        json={
+            "title": f"Field closeout {uuid.uuid4().hex[:6]}",
+            "description": "Verification-driven resolution fixture.",
+            "primary_asset_id": asset["id"],
+            "category": unique_category(),
+            "severity": "high",
+        },
+    ).json()["data"]
+
+    started = operator.post(f"/api/workflows/start?incident_id={incident['id']}")
+    assert started.status_code == 201, started.text
+    wf = started.json()["data"]
+    approval = operator.post(
+        f"/api/optimization/plans/{wf['plan_id']}/approve",
+        json={"approve": True, "note": "Dispatch it"},
+    )
+    assert approval.status_code == 200, approval.text
+    wf = operator.get(f"/api/workflows/{wf['id']}").json()["data"]
+    assert wf["status"] == "awaiting_field"
+
+    tasks = operator.get(f"/api/tasks?incident_id={incident['id']}&page_size=50").json()["data"]
+    assert tasks, "approval must dispatch tasks"
+    for task in tasks:
+        owner = next(e for e in engineers if e.get("/api/auth/me").json()["data"]["user"]["id"] == task["assignee_id"])
+        for step in ("accepted", "in_progress", "completed"):
+            response = owner.post(
+                f"/api/tasks/{task['id']}/transition",
+                json={"status": step, "note": step, "actual_hours": 1.0},
+            )
+            assert response.status_code == 200, (task["code"], step, response.text)
+
+    verified = 0
+    for task in operator.get(f"/api/tasks?incident_id={incident['id']}&page_size=50").json()["data"]:
+        if task["status"] == "completed":
+            response = operator.post(
+                f"/api/tasks/{task['id']}/transition", json={"status": "verified", "note": "ok"}
+            )
+            assert response.status_code == 200, response.text
+            verified += 1
+    assert verified == len(tasks)
+
+    wf = operator.get(f"/api/workflows/{wf['id']}").json()["data"]
+    assert wf["status"] == "completed", wf
+    assert wf["current_step"] == "incident_resolved"
+    assert {"engineer_accepted", "repair_verified", "incident_resolved"} <= set(wf["completed_steps"])
+    closed = operator.get(f"/api/incidents/{incident['id']}").json()["data"]
+    assert closed["status"] == "resolved"
 
 
 def test_workflow_survives_an_injected_failure_and_recovers(client, as_role):
