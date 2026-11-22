@@ -12,28 +12,32 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
 ALGORITHM = "HS256"
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+BCRYPT_ROUNDS = 12
 
 
 # --------------------------------------------------------------------------- #
 # passwords
 # --------------------------------------------------------------------------- #
 def hash_password(password: str) -> str:
-    # bcrypt truncates at 72 bytes; pre-hash long inputs so nothing is silently
-    # dropped (and to keep the API honest about password length validation).
-    return pwd_context.hash(_normalise_password(password))
+    """Hash with bcrypt.
+
+    bcrypt only considers the first 72 bytes, so anything longer is pre-hashed
+    with SHA-256 to avoid silently truncating a user's passphrase.
+    """
+    material = _normalise_password(password).encode("utf-8")
+    return bcrypt.hashpw(material, bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        return pwd_context.verify(_normalise_password(plain), hashed)
-    except ValueError:
+        return bcrypt.checkpw(_normalise_password(plain).encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
         return False
 
 
