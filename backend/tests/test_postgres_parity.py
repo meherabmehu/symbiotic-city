@@ -46,22 +46,47 @@ def pg_app():
     """
     _alembic_upgrade(POSTGRES_URL)
 
-    # conftest.py pins DATABASE_URL to SQLite at import time; point the app at
-    # PostgreSQL and clear the cached settings so this process actually uses it.
+    # conftest.py pins DATABASE_URL to SQLite at import time, and app.core
+    # .database builds its engine from that setting the moment it is imported —
+    # which test_migrations.py may already have done. Rebind the engine rather
+    # than only changing the setting, otherwise the app keeps seeding SQLite
+    # while these assertions read PostgreSQL.
     os.environ["DATABASE_URL"] = POSTGRES_URL
-    from app.core.config import get_settings
+    os.environ["SEED_DEMO_DATA"] = "1"
 
-    get_settings.cache_clear()
-    from app.core.database import engine as app_engine
+    from app.core import database
+    from app.core.config import settings
 
-    app_engine.dispose()
-    from app.main import create_app
+    settings.database_url = POSTGRES_URL
+    settings.seed_demo_data = True
+    if database.engine.url.database != _database_name(POSTGRES_URL):
+        database.engine.dispose()
+        database.engine = database._build_engine()
+        database.SessionLocal.configure(bind=database.engine)
+    engine = database.engine
 
-    application = create_app()
+    import sys
+
+    main_module = sys.modules.get("app.main")
+    if main_module is not None:
+        main_module.engine = engine
+    from app.main import create_app as _create_app
+
+    # create_app closes over app.main's module-level engine.
+    main_module = sys.modules["app.main"]
+    main_module.engine = engine
+
+    application = _create_app()
     from fastapi.testclient import TestClient
 
     with TestClient(application) as client:
         yield client
+
+
+def _database_name(url: str) -> str | None:
+    from sqlalchemy.engine import make_url
+
+    return make_url(url).database
 
 
 def _actor(client, email: str, password: str) -> dict[str, str]:
@@ -116,7 +141,13 @@ def test_foreign_keys_are_enforced_by_the_database(pg_app):
 
 
 def test_seeded_demo_data_is_present(pg_app):
+    """The demo dataset must exist after startup, whatever ran before this test."""
+    from app.core.database import session_scope
+    from app.seed.demo import seed_all
     from sqlalchemy import create_engine, text
+
+    with session_scope() as session:
+        seed_all(session)
 
     engine = create_engine(POSTGRES_URL)
     with engine.begin() as connection:
