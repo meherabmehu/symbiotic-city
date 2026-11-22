@@ -1,0 +1,36 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+*.db-wal
+*.db-shm
+backend/data/
+
+# node
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+*.tsbuildinfo
+.vitest/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+backend/.env
+
+# misc
+.DS_Store
+*.log
+playwright-report/
+test-results/
