@@ -312,12 +312,72 @@ def transition(
     task.updated_at = now
 
     _notify_task_progress(db, task, current, target)
-    if target == TaskStatus.ACCEPTED:
-        from app.workflows.engine import sync_workflow_step
-
-        sync_workflow_step(db, incident_id=task.incident_id, step="engineer_accepted", actor_id=actor.id)
+    _sync_workflow_after_transition(db, task, current=current, target=target, actor_id=actor.id)
     db.flush()
     return task
+
+
+def _sync_workflow_after_transition(
+    db: Session,
+    task: RepairTask,
+    *,
+    current: str,
+    target: str,
+    actor_id: int | None,
+) -> None:
+    """Advance the incident's recovery workflow when a field step completes.
+
+    This is what joins the field workspace to the orchestration layer: the first
+    acceptance records ``engineer_accepted``, and verifying the last open task
+    records ``repair_verified`` and then lets the workflow resolve the incident.
+    Signals are idempotent, so replaying one is harmless.
+    """
+    from app.models.workflow import WorkflowInstance
+    from app.workflows.engine import sync_workflow_step
+
+    if task.incident_id is None:
+        return
+    if target == TaskStatus.ACCEPTED:
+        sync_workflow_step(
+            db, incident_id=task.incident_id, step="engineer_accepted", actor_id=actor_id
+        )
+    if target != TaskStatus.VERIFIED:
+        return
+    open_tasks = db.scalar(
+        select(func.count())
+        .select_from(RepairTask)
+        .where(
+            RepairTask.incident_id == task.incident_id,
+            RepairTask.status.notin_([TaskStatus.VERIFIED, TaskStatus.CANCELLED]),
+        )
+    )
+    if open_tasks:
+        return
+    sync_workflow_step(
+        db, incident_id=task.incident_id, step="repair_verified", actor_id=actor_id
+    )
+    workflow = db.scalar(
+        select(WorkflowInstance).where(
+            WorkflowInstance.incident_id == task.incident_id,
+            WorkflowInstance.status == "running",
+        )
+    )
+    if workflow is None:
+        return
+    from app.workflows import engine as workflow_engine
+
+    try:
+        workflow_engine.advance_workflow(
+            db,
+            workflow_id=workflow.id,
+            step="incident_resolved",
+            actor_id=actor_id,
+            payload={"note": f"All repair tasks verified (last: {task.code})."},
+        )
+    except ApiError:
+        # Resolution still requires an operator; the workflow stays parked with
+        # the verified state recorded rather than claiming success.
+        workflow.status = "awaiting_field"
 
 
 def _notify_task_progress(db: Session, task: RepairTask, previous: str, target: str) -> None:

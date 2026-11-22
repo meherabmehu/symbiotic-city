@@ -141,12 +141,36 @@ def approve_plan(
     plan.approved_by_id = user.id
     db.flush()
 
+    # Rows are snapshotted before the reservation step so a mid-step failure can
+    # still be reported to the caller *and* committed: the step's savepoint
+    # rolls back its partial work, but the approval and the persisted failure
+    # have to survive so the operator can inspect the rollback and retry.
+    session_state = {
+        "plan_status": plan.status,
+        "approved_at": plan.approved_at,
+        "approved_by_id": plan.approved_by_id,
+    }
+
     workflow = db.scalar(
         select(__import__("app.models.workflow", fromlist=["WorkflowInstance"]).WorkflowInstance)
         .where(
             __import__("app.models.workflow", fromlist=["WorkflowInstance"]).WorkflowInstance.plan_id
             == plan.id
         )
+    )
+    workflow_state = (
+        {
+            "status": workflow.status,
+            "current_step": workflow.current_step,
+            "failure_step": workflow.failure_step,
+            "failure_reason": workflow.failure_reason,
+            "completed_steps_json": workflow.completed_steps_json,
+            "started_at": workflow.started_at,
+            "retry_count": workflow.retry_count,
+            "updated_at": workflow.updated_at,
+        }
+        if workflow
+        else None
     )
     try:
         if workflow:
@@ -159,8 +183,38 @@ def approve_plan(
             )
         else:
             _reserve_for_plan(db, plan, user.id)
-    except ApiError:
+    except ApiError as exc:
         db.rollback()
+        if workflow and exc.code in _WORKFLOW_FAULT_CODES and session_state:
+            # Re-apply only the approval and the recorded failure: the partial
+            # capacity holds made by the failed attempt were rolled back with the
+            # step's savepoint, so nothing is half-reserved.
+            plan = db.get(OptimizationPlan, plan_id)
+            if plan is not None:
+                plan.status = session_state["plan_status"]
+                plan.approved_at = session_state["approved_at"]
+                plan.approved_by_id = session_state["approved_by_id"]
+            workflow = db.get(workflow_engine.WorkflowInstance, workflow.id)
+            if workflow is not None and workflow_state:
+                for field, value in workflow_state.items():
+                    setattr(workflow, field, value)
+            audit.record(
+                db, action="optimization.plan_approval_failed", actor=user,
+                resource_type="optimization_plan", resource_id=plan_id,
+                message=f"{plan.code if plan else plan_id} approved but the reservation step failed: {exc.message}",
+                metadata={"workflow_id": workflow.id if workflow else None}, request=request,
+            )
+            db.commit()
+            raise ApiError(
+                exc.message,
+                status_code=status.HTTP_409_CONFLICT,
+                code=exc.code,
+                details={
+                    "workflow_id": workflow.id if workflow else None,
+                    "failure_step": workflow.failure_step if workflow else None,
+                    "compensated": True,
+                },
+            ) from exc
         raise
     audit.record(
         db, action="optimization.plan_approved", actor=user, resource_type="optimization_plan",
@@ -172,6 +226,16 @@ def approve_plan(
     plan = db.get(OptimizationPlan, plan_id)
     data = service.plan_to_dict(db, plan, detail=True)
     return ok(data)
+
+
+_WORKFLOW_FAULT_CODES = {
+    "injected_failure",
+    "reservation_failed",
+    "infeasible_plan",
+    "no_engineer_available",
+    "step_failed",
+    "unexpected_error",
+}
 
 
 def _reserve_for_plan(db, plan: OptimizationPlan, actor_id: int) -> None:

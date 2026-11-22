@@ -37,7 +37,8 @@ rollback/compensation path can be shown live.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -311,15 +312,18 @@ def _execute_step(ctx: WorkflowContext, step: str) -> None:
         raise StepFailure(f"No handler registered for step {step}.", code="missing_handler")
 
     try:
-        if step != "resources_reserved":
-            # resources_reserved injects its own mid-step fault
-            _maybe_fail(workflow, step)
-        message, data = handler(ctx)
+        with _savepoint(ctx.db):
+            if step != "resources_reserved":
+                # resources_reserved injects its own mid-step fault
+                _maybe_fail(workflow, step)
+            message, data = handler(ctx)
     except StepFailure as failure:
         _handle_failure(ctx, step, failure)
         raise
     except Exception as exc:  # noqa: BLE001 - any step error is compensated
-        failure = StepFailure(f"Unexpected error in '{STEP_LABELS[step]}': {exc}")
+        failure = StepFailure(
+            f"Unexpected error in '{STEP_LABELS[step]}': {exc}", code="unexpected_error"
+        )
         _handle_failure(ctx, step, failure)
         raise failure from exc
 
@@ -377,7 +381,38 @@ def request_tail(*, context: WorkflowContext, workflow: WorkflowInstance) -> Non
             return
 
 
+@contextmanager
+def _savepoint(db: Session) -> Iterator[None]:
+    """Execute a step inside a savepoint.
+
+    If the step fails, everything it wrote is rolled back and only the failure
+    record is kept, so a failed attempt can never leave a half-written step
+    behind while the workflow row stays durable for inspection and retry.
+    """
+    nested = db.begin_nested()
+    try:
+        yield
+    except BaseException:
+        nested.rollback()
+        raise
+    else:
+        nested.commit()
+
+
 def _handle_failure(ctx: WorkflowContext, step: str, failure: StepFailure) -> None:
+    """Record the failed step, release partial effects, then surface the error.
+
+    The failure record is written outside the step's savepoint so it survives the
+    rollback of the partial work, which is what makes "failed, nothing applied,
+    safe to retry" verifiable from the database alone.
+    """
+    failure.message = _record_failed_step(ctx, step, failure)
+    _compensate(ctx, step)
+    _notify_failure(ctx, step, failure)
+
+
+def _record_failed_step(ctx: WorkflowContext, step: str, failure: StepFailure) -> str:
+    """Persist the failure state and return the message operators should see."""
     workflow = ctx.workflow
     attempt = workflow.retry_count + 1
     workflow.status = "failed"
@@ -392,21 +427,25 @@ def _handle_failure(ctx: WorkflowContext, step: str, failure: StepFailure) -> No
         outcome="failed",
         message=failure.message,
         actor_id=ctx.actor_id,
-        data={"rolled_back": True},
+        data={"rolled_back": True, "code": failure.code},
     )
-    _compensate(ctx, step)
+    ctx.db.flush()
+    return failure.message
+
+
+def _notify_failure(ctx: WorkflowContext, step: str, failure: StepFailure) -> None:
+    workflow = ctx.workflow
     notify.push_to_roles(
         ctx.db,
         ["city_operator", "super_admin"],
-        title=f"Workflow {workflow.code} failed",
-        body=failure.message,
+        title=f"Recovery workflow failed at {STEP_LABELS.get(step, step)}",
+        body=f"{workflow.code}: {failure.message}",
         category="workflow",
-        severity="error",
-        link="/workflows",
-        entity_type="workflow",
+        severity="critical",
+        link=f"/workflows/{workflow.id}",
+        entity_type="workflow_instance",
         entity_id=workflow.id,
     )
-    ctx.db.flush()
 
 
 def _compensate(ctx: WorkflowContext, failed_step: str) -> None:
@@ -439,22 +478,33 @@ def _compensate(ctx: WorkflowContext, failed_step: str) -> None:
         task.status = TaskStatus.CANCELLED
         task.updated_at = utcnow()
     if reservations or tasks:
-        _record_event(
-            db,
-            workflow,
-            "compensation",
-            attempt=workflow.retry_count + 1,
-            outcome="succeeded",
-            message=(
-                f"Released {len(reservations)} reservation(s) and cancelled {len(tasks)} "
-                f"undispatched task(s) after the failure at {failed_step}."
-            ),
-            actor_id=ctx.actor_id,
-            data={
-                "released_reservations": [r.id for r in reservations],
-                "cancelled_tasks": [t.id for t in tasks],
-            },
+        message = (
+            f"Released {len(reservations)} reservation(s) and cancelled {len(tasks)} "
+            f"undispatched task(s) after the failure at {failed_step}."
         )
+    else:
+        # The step ran inside a savepoint, so a mid-step failure had its partial
+        # writes rolled back before it reached this point. Record that fact
+        # explicitly instead of leaving the ledger silent about compensation.
+        message = (
+            f"Nothing needed releasing after the failure at {failed_step}: the step's "
+            "savepoint rolled back its partial writes, so no capacity or task survived "
+            "the attempt."
+        )
+    _record_event(
+        db,
+        workflow,
+        "compensation",
+        attempt=workflow.retry_count + 1,
+        outcome="succeeded",
+        message=message,
+        actor_id=ctx.actor_id,
+        data={
+            "released_reservations": [r.id for r in reservations],
+            "cancelled_tasks": [t.id for t in tasks],
+            "savepoint_rollback": not reservations and not tasks,
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -578,6 +628,44 @@ def retry_workflow(
         request_tail(context=ctx, workflow=workflow)
         if workflow.status == "running":
             workflow.status = "awaiting_field"
+    db.flush()
+    return workflow
+
+
+def resume_from_current_position(
+    db: Session, workflow: WorkflowInstance, *, actor_id: int | None
+) -> WorkflowInstance:
+    """Resume a workflow that is parked on a manual step.
+
+    Used when an operator completes the gating manual action (plan approval or
+    field execution) and the workflow still has work queued. The retry counters
+    and completed steps are preserved, so resuming is idempotent: a step that is
+    already recorded as succeeded is never executed twice.
+    """
+    if workflow.status not in ("running", "awaiting_approval", "awaiting_field"):
+        raise ApiError(
+            f"Workflow is {workflow.status} and cannot be resumed.",
+            status_code=409,
+            code="invalid_state",
+        )
+    workflow.status = "running"
+    workflow.updated_at = utcnow()
+    _record_event(
+        db,
+        workflow,
+        "resume",
+        attempt=workflow.retry_count + 1,
+        outcome="started",
+        message="Resuming from the current manual step; completed steps are preserved.",
+        actor_id=actor_id,
+    )
+    ctx = WorkflowContext(db=db, workflow=workflow, actor_id=actor_id, payload={})
+    if "plan_approved" in completed_steps(workflow):
+        request_tail(context=ctx, workflow=workflow)
+        if workflow.status == "running":
+            workflow.status = "awaiting_field"
+    else:
+        _run_automatic_steps(ctx, start_at=workflow.current_step)
     db.flush()
     return workflow
 
