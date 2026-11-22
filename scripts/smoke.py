@@ -22,6 +22,7 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import sys
+import uuid
 import urllib.error
 import urllib.request
 
@@ -47,7 +48,7 @@ class Client:
     def call(self, method: str, path: str, body: dict | None = None):
         data = json.dumps(body).encode() if body is not None else None
         request = urllib.request.Request(BASE + path, data=data, method=method)
-        request.add_header("Accept", "application/json")
+        request.add_header("Accept", "application/json, text/csv")
         if data is not None:
             request.add_header("Content-Type", "application/json")
         token = self.cookie("symbiotic_csrf")
@@ -55,14 +56,19 @@ class Client:
             request.add_header("X-CSRF-Token", token)
         try:
             with self.opener.open(request, timeout=60) as response:
-                raw = response.read()
-                return response.status, json.loads(raw) if raw else {}
+                return self._decode(response.status, response.read())
         except urllib.error.HTTPError as exc:
-            raw = exc.read()
-            try:
-                return exc.code, json.loads(raw) if raw else {}
-            except ValueError:
-                return exc.code, {"raw": raw.decode("utf-8", "replace")[:400]}
+            return self._decode(exc.code, exc.read())
+
+    @staticmethod
+    def _decode(status: int, raw: bytes):
+        """CSV exports are not JSON; return the text so callers can assert on it."""
+        if not raw:
+            return status, {}
+        try:
+            return status, json.loads(raw)
+        except ValueError:
+            return status, {"text": raw.decode("utf-8", "replace")}
 
 
 def check(label: str, condition: bool, detail: object = "") -> bool:
@@ -174,27 +180,32 @@ def main() -> int:
     )
 
     section("4 · incident and recovery workflow")
-    # One open incident per (asset, category) is enforced, so take the first free
-    # asset. This keeps the script re-runnable without wiping seeded data.
-    incident, incident_id, last_attempt = {}, None, None
-    for asset_id in (1, 2, 3, 4, 5, 6, 7):
-        status, body = operator.call(
-            "POST",
-            "/incidents",
-            {
-                "title": f"Smoke test: feeder trip on asset {asset_id}",
-                "description": "Automated end-to-end verification of the recovery loop.",
-                "category": "power_outage",
-                "severity": "critical",
-                "primary_asset_id": asset_id,
-            },
-        )
-        if status == 201:
-            incident = body.get("data") or {}
-            incident_id = incident.get("id")
-            break
-        last_attempt = body
-    check(f"incident {incident.get('code')} created → 201", status == 201 and incident_id, last_attempt)
+    # The API allows one open incident per (asset, category) and a workflow refuses
+    # to start twice for one incident. Clear this script's own leftovers first so it
+    # stays re-runnable without wiping seeded history.
+    status, body = operator.call("GET", "/incidents?page_size=100")
+    for stale in body.get("data") or []:
+        if stale.get("title", "").startswith("Smoke test") and stale.get("status") not in {"resolved", "cancelled"}:
+            operator.call(
+                "POST",
+                f"/incidents/{stale['id']}/transition",
+                {"status": "cancelled", "note": "superseded by a fresh smoke run"},
+            )
+
+    status, body = operator.call(
+        "POST",
+        "/incidents",
+        {
+            "title": "Smoke test: Meridian East feeder trip",
+            "description": "Automated end-to-end verification of the recovery loop.",
+            "category": "power_outage",
+            "severity": "critical",
+            "primary_asset_id": 1,
+        },
+    )
+    incident = body.get("data") or {}
+    incident_id = incident.get("id")
+    check(f"incident {incident.get('code')} created → 201", status == 201 and incident_id, body)
 
     status, body = operator.call("POST", f"/workflows/start?incident_id={incident_id}")
     workflow = body.get("data") or {}
@@ -205,19 +216,36 @@ def main() -> int:
         body,
     )
 
-    if not infeasible and plan_id and workflow_id:
+    # The workflow generates its own plan for the incident; approving the analyst's
+    # standalone plan would leave this workflow parked, which is correct behaviour
+    # but not what this script is exercising.
+    workflow_plan_id = workflow.get("plan_id") or plan_id
+    if workflow_plan_id and workflow_id:
         status, body = operator.call(
-            "POST", f"/optimization/plans/{plan_id}/approve", {"approve": True, "note": "smoke test approval"}
+            "POST",
+            f"/optimization/plans/{workflow_plan_id}/approve",
+            {"approve": True, "note": "smoke test approval"},
         )
-        check("plan approved → 200", status == 200, body)
+        check(f"plan {workflow_plan_id} approved → 200", status == 200, body)
 
         status, body = operator.call("GET", f"/tasks?incident_id={incident_id}&page_size=50")
         tasks = body.get("data") or []
         check(f"{len(tasks)} repair tasks dispatched to the field", status == 200 and len(tasks) > 0, body)
 
+        # Only the assignee may accept, and dispatch splits work across engineers,
+        # so key the sessions by user id instead of guessing.
+        second_engineer = login("engineer2@symbiotic.city", "Engineer#2026")
+
+        def user_id(client: Client):
+            return ((client.call("GET", "/auth/me")[1].get("data") or {}).get("user") or {}).get("id")
+
+        by_user_id = {user_id(engineer): engineer, user_id(second_engineer): second_engineer}
         for task in tasks:
             if task.get("status") in {"assigned", "rejected"}:
-                engineer.call("POST", f"/tasks/{task['id']}/transition", {"status": "accepted", "note": "en route"})
+                assignee = by_user_id.get(task.get("assignee_id"), engineer)
+                assignee.call(
+                    "POST", f"/tasks/{task['id']}/transition", {"status": "accepted", "note": "en route"}
+                )
         accepted = [
             t for t in (operator.call("GET", f"/tasks?incident_id={incident_id}&page_size=50")[1].get("data") or [])
             if t.get("status") in {"accepted", "in_progress"}
@@ -229,9 +257,13 @@ def main() -> int:
         check(f"workflow step now {wf.get('current_step')}", wf.get("current_step") in {"engineer_accepted", "repair_verified", "incident_resolved"}, body)
 
         for task in accepted:
-            engineer.call("POST", f"/tasks/{task['id']}/transition", {"status": "in_progress", "note": "on site"})
-            engineer.call("POST", f"/tasks/{task['id']}/transition",
-                          {"status": "completed", "note": "repair complete", "actual_hours": 2})
+            assignee = by_user_id.get(task.get("assignee_id"), engineer)
+            assignee.call("POST", f"/tasks/{task['id']}/transition", {"status": "in_progress", "note": "on site"})
+            assignee.call(
+                "POST",
+                f"/tasks/{task['id']}/transition",
+                {"status": "completed", "note": "repair complete", "actual_hours": 2},
+            )
         status, body = operator.call("GET", f"/tasks?incident_id={incident_id}&page_size=50")
         for task in body.get("data") or []:
             if task.get("status") == "completed":
@@ -245,7 +277,7 @@ def main() -> int:
         status, body = operator.call("GET", f"/incidents/{incident_id}")
         check("incident closed as resolved", (body.get("data") or {}).get("status") == "resolved", body)
 
-        status, body = operator.call("GET", f"/resources/reservations?plan_id={plan_id}")
+        status, body = operator.call("GET", f"/resources/reservations?plan_id={workflow_plan_id}")
         reservations = body.get("data") or []
         check(f"reservations accounted for ({len(reservations)} rows, none stranded active)",
               all(r.get("status") != "active" for r in reservations), reservations)
@@ -256,7 +288,12 @@ def main() -> int:
     check(f"dashboard bundle returned {len(bundle)} sections", status == 200 and "overview" in bundle, body)
 
     status, body = analyst.call("GET", "/analytics/export?kind=incidents&format=csv")
-    check("CSV export available to an authorised role", status == 200, body)
+    rows = (body.get("text") or "").splitlines()
+    check(
+        f"CSV export returned {max(len(rows) - 1, 0)} incident rows",
+        status == 200 and len(rows) > 1 and "," in rows[0],
+        body,
+    )
 
     status, body = admin.call("GET", "/audit-logs?page_size=10")
     check("audit trail readable by admin", status == 200 and len(body.get("data") or []) > 0, body)
@@ -266,10 +303,12 @@ def main() -> int:
     check("analyst blocked from the user directory (403)", status == 403, status)
     status, _ = engineer.call("GET", "/audit-logs")
     check("engineer blocked from the audit log (403)", status == 403, status)
+    # Unique category keeps the idempotency guard from rejecting a re-run.
+    probe_category = f"rbac_probe_{uuid.uuid4().hex[:6]}"
     status, _ = operator.call(
         "POST",
         "/incidents",
-        {"title": "Permission probe", "description": "rbac", "category": "power_outage",
+        {"title": "Permission probe", "description": "rbac", "category": probe_category,
          "severity": "low", "primary_asset_id": 2},
     )
     check("operator may create incidents (201)", status == 201, status)
@@ -278,7 +317,7 @@ def main() -> int:
     status, _ = anon.call(
         "POST",
         "/incidents",
-        {"title": "Anonymous probe", "description": "rbac", "category": "power_outage",
+        {"title": "Anonymous probe", "description": "rbac", "category": f"{probe_category}_anon",
          "severity": "low", "primary_asset_id": 2},
     )
     check("anonymous write refused (401/403)", status in (401, 403), status)
