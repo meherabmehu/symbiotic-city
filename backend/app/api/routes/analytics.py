@@ -176,8 +176,20 @@ def export(
     elif kind == "categories":
         rows = analytics.category_breakdown(db)
     elif kind == "incidents":
+        # Flat rows built in one query: a CSV export must not fan out into a
+        # per-incident lookup for assets and task counts.
         rows = [
-            analytics.incident_to_dict(i)
+            {
+                "code": i.code,
+                "title": i.title,
+                "category": i.category,
+                "severity": i.severity,
+                "status": i.status,
+                "affected_population": i.affected_population,
+                "reported_at": i.reported_at,
+                "resolved_at": i.resolved_at,
+                "resolution_notes": i.resolution_notes,
+            }
             for i in db.scalars(
                 select(Incident).order_by(Incident.reported_at.desc()).limit(500)
             ).all()
