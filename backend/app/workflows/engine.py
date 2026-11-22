@@ -160,6 +160,19 @@ def clear_faults(workflow_id: int) -> None:
     _FAULTS.pop(workflow_id, None)
 
 
+def take_fault(workflow_id: int, step: str) -> bool:
+    """True exactly once if a fault was registered for this step.
+
+    Steps call this *mid-way through* their work so the demonstration shows a
+    genuine partial failure (some reservations made, then a failure) rather than
+    a step that refuses to start.
+    """
+    if _FAULTS.get(workflow_id) == step:
+        _FAULTS.pop(workflow_id, None)
+        return True
+    return False
+
+
 def _maybe_fail(workflow: WorkflowInstance, step: str) -> None:
     if _FAULTS.get(workflow.id) == step:
         _FAULTS.pop(workflow.id, None)
@@ -180,35 +193,53 @@ def start_recovery_workflow(
     simulation_run: SimulationRun | None,
     plan: OptimizationPlan | None,
     actor_id: int | None,
+    adopt_id: int | None = None,
 ) -> WorkflowInstance:
+    """Start (or adopt) the recovery workflow for an incident.
+
+    ``adopt_id`` lets callers pre-create the workflow row (so a demonstration
+    fault can be registered against its id) and then hand it over to the engine.
+    """
     existing = db.scalar(
         select(WorkflowInstance).where(
             WorkflowInstance.incident_id == incident.id,
             WorkflowInstance.status.in_(["running", "awaiting_approval", "awaiting_field"]),
+            WorkflowInstance.id != (adopt_id or 0),
         )
     )
-    if existing:
+    if existing and adopt_id is None:
         raise ApiError(
             f"{existing.code} is already driving this incident. Retry or resume it instead of starting a second workflow.",
             status_code=409,
             code="workflow_exists",
             details={"workflow_id": existing.id, "code": existing.code},
         )
-    workflow = WorkflowInstance(
-        code=next_workflow_code(db),
-        workflow_type="recovery",
-        title=f"Recovery workflow for {incident.code}",
-        status="running",
-        current_step="incident_created",
-        incident_id=incident.id,
-        simulation_run_id=simulation_run.id if simulation_run else None,
-        plan_id=plan.id if plan else None,
-        started_by_id=actor_id,
-        started_at=utcnow(),
-    )
-    db.add(workflow)
-    db.flush()
-    _set_completed(workflow, [])
+    if adopt_id is not None:
+        workflow = db.get(WorkflowInstance, adopt_id)
+        if workflow is None:  # pragma: no cover - defensive
+            raise ApiError("The workflow to adopt no longer exists.", status_code=404, code="not_found")
+        workflow.status = "running"
+        workflow.current_step = "incident_created"
+        workflow.started_at = utcnow()
+        workflow.simulation_run_id = simulation_run.id if simulation_run else workflow.simulation_run_id
+        workflow.plan_id = plan.id if plan else workflow.plan_id
+        _set_completed(workflow, [])
+    else:
+        workflow = WorkflowInstance(
+            code=next_workflow_code(db),
+            workflow_type="recovery",
+            title=f"Recovery workflow for {incident.code}",
+            status="running",
+            current_step="incident_created",
+            incident_id=incident.id,
+            simulation_run_id=simulation_run.id if simulation_run else None,
+            plan_id=plan.id if plan else None,
+            started_by_id=actor_id,
+            started_at=utcnow(),
+        )
+        db.add(workflow)
+        db.flush()
+        _set_completed(workflow, [])
     ctx = WorkflowContext(
         db=db,
         workflow=workflow,
@@ -222,11 +253,17 @@ def start_recovery_workflow(
     try:
         _run_automatic_steps(ctx, start_at="incident_created")
     except StepFailure as failure:
-        db.rollback()
+        # The failed run is persisted on purpose: completed steps, the failure
+        # reason and the compensating actions are the artefact operators and
+        # judges need to see. Each step writes only its own effects and every
+        # partial effect is compensated in _handle_failure, so nothing is
+        # half-applied (no orphan reservations, no stranded tasks).
+        db.flush()
         raise ApiError(
             failure.message,
             status_code=409,
             code=failure.code,
+            details={"workflow_id": workflow.id, "failure_step": workflow.failure_step},
         ) from failure
     db.flush()
     return workflow
@@ -274,7 +311,9 @@ def _execute_step(ctx: WorkflowContext, step: str) -> None:
         raise StepFailure(f"No handler registered for step {step}.", code="missing_handler")
 
     try:
-        _maybe_fail(workflow, step)
+        if step != "resources_reserved":
+            # resources_reserved injects its own mid-step fault
+            _maybe_fail(workflow, step)
         message, data = handler(ctx)
     except StepFailure as failure:
         _handle_failure(ctx, step, failure)

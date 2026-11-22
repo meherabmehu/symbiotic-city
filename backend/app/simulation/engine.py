@@ -150,6 +150,12 @@ class CascadeResult:
     generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict:
+        """Serialise the result.
+
+        ``generated_at`` is excluded on purpose: two runs with identical inputs
+        produce identical payloads, which is what the determinism guarantee
+        covers. The timestamp is stored on the run record instead.
+        """
         return {
             "run_code": self.run_code,
             "status": self.status,
@@ -163,7 +169,6 @@ class CascadeResult:
             "duration_ms": self.duration_ms,
             "random_seed": self.random_seed,
             "scenario_label": self.scenario_label,
-            "generated_at": self.generated_at,
         }
 
 
@@ -450,6 +455,8 @@ def simulate_cascade(
     for asset_id in list(impacts):
         if impacts[asset_id].impact_level == DEGRADED:
             continue
+        if impacts[asset_id].depth >= max_depth:
+            continue
         for neighbour in graph.successors(asset_id):
             if neighbour in impacts:
                 continue
@@ -569,8 +576,12 @@ def recovery_projection(
                 changed = True
     after_failed = still_down
     recovered = sorted(base_failed - after_failed)
+    code_of = {a.id: a.code for a in assets}
     return {
         "restored_assets": restored,
+        "restored_asset_ids": restored,
+        "recovered_asset_ids": recovered,
+        "recovered_codes": [code_of.get(i, str(i)) for i in recovered],
         "failed_before": len(base_failed),
         "failed_after": len(after_failed),
         "recovered_assets": recovered,
@@ -609,7 +620,18 @@ def apply_load_sensitivity(
     out: list[AssetNode] = []
     for asset in assets:
         factor = 1.0 + rng.uniform(-noise, noise)
-        clone = AssetNode(**{**asset.__dict__})
+        clone = AssetNode(
+            id=asset.id,
+            code=asset.code,
+            name=asset.name,
+            category=asset.category,
+            criticality=asset.criticality,
+            status=asset.status,
+            capacity=asset.capacity,
+            load_percent=asset.load_percent,
+            map_x=asset.map_x,
+            map_y=asset.map_y,
+        )
         clone.load_percent = max(0.0, min(100.0, asset.load_percent * factor))
         out.append(clone)
     return out

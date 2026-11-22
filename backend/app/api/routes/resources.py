@@ -92,6 +92,27 @@ def update_resource(
     return ok(service.resource_to_dict(db, resource))
 
 
+@router.get("/resources/reservations")
+def reservations(
+    db: DbSession,
+    user: CurrentUser,
+    resource_id: int | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+):
+    rows = service.list_reservations(db, resource_id=resource_id, status=status_filter)
+    return ok(
+        [
+            {
+                "id": r.id, "resource_id": r.resource_id, "repair_task_id": r.repair_task_id,
+                "plan_id": r.plan_id, "workflow_id": r.workflow_id, "quantity": float(r.quantity),
+                "status": r.status, "reserved_at": r.reserved_at, "released_at": r.released_at,
+                "release_reason": r.release_reason,
+            }
+            for r in rows
+        ]
+    )
+
+
 @router.get("/resources/{resource_id}")
 def get_resource(resource_id: int, db: DbSession, user: CurrentUser):
     resource = db.get(Resource, resource_id)
@@ -155,24 +176,3 @@ def release(
     )
     db.commit()
     return ok({"message": "Reservation released.", "id": reservation.id})
-
-
-@router.get("/resources/reservations")
-def reservations(
-    db: DbSession,
-    user: CurrentUser,
-    resource_id: int | None = None,
-    status_filter: str | None = Query(None, alias="status"),
-):
-    rows = service.list_reservations(db, resource_id=resource_id, status=status_filter)
-    return ok(
-        [
-            {
-                "id": r.id, "resource_id": r.resource_id, "repair_task_id": r.repair_task_id,
-                "plan_id": r.plan_id, "workflow_id": r.workflow_id, "quantity": float(r.quantity),
-                "status": r.status, "reserved_at": r.reserved_at, "released_at": r.released_at,
-                "release_reason": r.release_reason,
-            }
-            for r in rows
-        ]
-    )

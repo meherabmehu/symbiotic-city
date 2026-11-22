@@ -39,6 +39,10 @@ class Api:
         self.client = client
         self.email: str | None = None
         self._csrf: str | None = None
+        self._session: str | None = None
+        # Sessions are carried explicitly in the Cookie header so that several
+        # actors can be exercised against one TestClient without leaking state.
+        client.cookies.clear()
 
     def login(self, email: str, password: str) -> "Api":
         # Each Api keeps its own cookie jar by storing cookies explicitly.
@@ -53,9 +57,11 @@ class Api:
 
     @property
     def headers(self) -> dict[str, str]:
-        headers = {"X-CSRF-Token": self._csrf or ""}
+        headers = {"X-CSRF-Token": self._csrf or "", "Cookie": ""}
         if self.email:
-            headers["Cookie"] = f"symbiotic_session={self._session}; symbiotic_csrf={self._csrf}"
+            headers["Cookie"] = (
+                f"symbiotic_session={self._session}; symbiotic_csrf={self._csrf}"
+            )
         return headers
 
     def get(self, url: str, **kwargs):
@@ -101,4 +107,17 @@ def anonymous(client) -> Api:
 
 @pytest.fixture
 def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex[:8]}@example.test"
+    return f"user-{uuid.uuid4().hex[:8]}@example.com"
+
+
+TEST_CATEGORY = "test_suite"
+
+
+def unique_category() -> str:
+    """A fresh incident category per scenario.
+
+    Incident creation deliberately rejects a second *active* incident for the
+    same asset + category (duplicate-action prevention). Tests therefore use a
+    unique category when they need more than one live incident on one asset.
+    """
+    return f"{TEST_CATEGORY}_{uuid.uuid4().hex[:10]}"

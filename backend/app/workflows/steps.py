@@ -319,6 +319,18 @@ def resources_reserved(ctx: "WorkflowContext") -> tuple[str, dict]:
         reserved.append(
             {"resource_id": resource.id, "code": resource.code, "quantity": float(reservation.quantity)}
         )
+        from app.workflows import engine as _engine
+
+        if _engine.take_fault(ctx.workflow.id, "resources_reserved"):
+            # Demonstration of a mid-flight failure: the reservation above is
+            # already committed when the step fails, so the workflow has to
+            # compensate by releasing it before a retry can run.
+            raise StepFailure(
+                "Injected failure halfway through resource reservation: "
+                f"{resource.code} was committed before the failure. Compensating actions "
+                "release the partial reservation so a retry cannot double book capacity.",
+                code="injected_failure",
+            )
     notify.push_to_roles(
         ctx.db,
         ["city_operator", "super_admin"],
