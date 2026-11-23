@@ -44,6 +44,7 @@ reason is named and the claim is downgraded rather than inflated.
 | Smoke through the Next.js proxy | **26/26** |
 | Route sweep | 27 pages, every real route answers 200 |
 | Frontend production build | compiled successfully; 27 routes emitted |
+| Browser suite (CI, Chromium + Pixel 7) | **47 passed, 0 failed** |
 
 The 10 SQLite skips are PostgreSQL-only tests. Pointed at a real PostgreSQL 16
 server the same suite reports 122 passed with **zero skips**, which is the run

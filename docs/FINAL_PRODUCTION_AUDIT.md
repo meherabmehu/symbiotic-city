@@ -20,14 +20,19 @@ The application is functionally complete and its core claims hold under executio
 checks pass against a live server, migrations round-trip on both databases, and the
 production build compiles all 27 routes.
 
-The audit found and fixed **eight real defects**, three of which would have been
+The audit found and fixed **nine real defects**, five of which would have been
 serious in front of a judge:
 
-1. `docker compose up` **could never have started** — `web` waited on `api` being
+1. **"Solve & persist" never navigated.** The optimisation screen read
+   `response.plan` from a helper that returns the whole `{success, data}` envelope,
+   so the id was `undefined` and the route became `/optimization/plans/undefined`.
+   The plan was written to the database and the user was never shown it. This broke
+   the core A02 journey for every user, and only the browser suite caught it.
+2. `docker compose up` **could never have started** — `web` waited on `api` being
    healthy, and `api` had no healthcheck.
-2. A **guessable `SECRET_KEY`** flowed into `ENVIRONMENT=production`.
-3. Session cookies could ship **without the `Secure` attribute** in production.
-4. The **digital twin widened the page** by ~548 px on a phone.
+3. A **guessable `SECRET_KEY`** flowed into `ENVIRONMENT=production`.
+4. Session cookies could ship **without the `Secure` attribute** in production.
+5. The **digital twin widened the page** by ~548 px on a phone.
 
 Two items are genuinely blocked by the environment and are not claimed: a live
 public URL (no Docker daemon, no hosting credentials) and design-page comparison
@@ -47,7 +52,7 @@ and design-fidelity rows left honestly open.
 | UI/UX fidelity | Partially verified (page 1 only) |
 | Docker deployment | Blocked |
 | Public URL | Blocked |
-| Browser suite | 47 tests configured; last CI run was red for thirteen test-side causes now fixed — **re-run pending** |
+| Browser suite | **47 passed, 0 failed** in CI (Chromium + Pixel 7) |
 
 ---
 
@@ -69,7 +74,7 @@ git merge-base --is-ancestor c3518cf origin/main   # → exit 0 (ancestor)
 
 ## 3 · Phase 2 — Browser (Playwright) suite
 
-**Partially verified — the suite is correct, the last green run is pending.**
+**Verified — 47 passed, 0 failed in CI**, on Chromium plus Pixel 7.
 
 Establishing the truth here was the hardest part of the audit, because the
 environment blocks both Actions logs and artifacts (the Azure blob host is
@@ -95,9 +100,30 @@ output within one run.
 | 2 | 1 passed, 45 failed | `Field` renders `Email address *`, so an anchored regex missed |
 | 3 | 33 passed, 13 failed | real content and budget mismatches |
 | 4 | 1 passed, 45 failed | login selectors still anchored against the required marker |
-| final | **pending** | all six causes addressed |
+| 5 | 40 passed, 7 failed | a real React render bug, plus forms driven without input |
+| 6 | 45 passed, 2 failed | wrong ARIA role and the dialog's close button |
+| 7 | 46 passed, 1 failed | "Preview solve" matched /solve/ and was clicked first |
+| 8 | **47 passed, 0 failed** | green |
 
-### The defect the suite found (in the application)
+### The critical defect the suite found (in the application)
+
+**"Solve & persist" produced no plan page, for anyone.**
+
+`api.raw(path, init)` is the untyped request helper; it resolves to the whole
+`{success, data}` envelope. The optimisation screen treated it as though it
+returned the payload:
+
+```ts
+const response = await api.raw<{ plan: OptimizationPlan }>("/optimization/requests", ...)
+router.push(`/optimization/plans/${response.plan.id}`)   // -> /plans/undefined
+```
+
+The POST returned `201`, the plan was persisted, and the user was routed to
+`/optimization/plans/undefined`. Nothing on screen said anything was wrong. The
+response types now describe the envelope and both call sites destructure `data`.
+`/workflows` already did this correctly, so the bug was isolated to one screen.
+
+### The layout defect the suite found
 
 The responsive spec caught a **genuine layout defect**: `/twin` and `/simulation`
 overflowed horizontally by 548 px at mobile width and 388 px at desktop width,
@@ -375,14 +401,18 @@ Every one is a change to the product, not to a test.
 
 | # | Defect | Severity | Found by |
 | --- | --- | --- | --- |
-| 1 | `docker compose up` could never start (`web` awaited a non-existent `api` healthcheck) | Critical | static review |
-| 2 | Guessable `SECRET_KEY` defaulted into `production` | High | security review |
-| 3 | Session cookie could lack `Secure` in production | High | security review |
-| 4 | Digital twin widened the page ~548 px on mobile | High | browser suite |
-| 5 | Wildcard `*.e2b.app` CORS origin in every environment | Medium | security review |
-| 6 | Demo passwords compiled into the client bundle unconditionally | Medium | security review |
-| 7 | Production could boot with the development secret | Medium | security review |
-| 8 | CI unable to surface browser-test failures at all | Medium | investigation |
+| 1 | **"Solve & persist" never navigated** — read `response.plan` from a helper that returns the envelope, so the id was undefined | **Critical** | browser suite |
+| 2 | `docker compose up` could never start (`web` awaited a non-existent `api` healthcheck) | Critical | static review |
+| 3 | Login form called `router.replace()` during render, tripping React's cross-component update warning | High | browser suite |
+| 4 | Guessable `SECRET_KEY` defaulted into `production` | High | security review |
+| 5 | Session cookie could lack `Secure` in production | High | security review |
+| 6 | Digital twin widened the page ~548 px on mobile | High | browser suite |
+| 7 | Wildcard `*.e2b.app` CORS origin in every environment | Medium | security review |
+| 8 | Demo passwords compiled into the client bundle unconditionally | Medium | security review |
+| 9 | Production could boot with the development secret | Medium | security review |
+
+The CI pipeline's inability to surface browser failures was fixed first, because
+without it none of defects 1, 3 or 6 could have been found at all.
 
 Earlier in the audit: the initial migration was not portable to PostgreSQL, and the
 container build paths and proxy target were wrong.
@@ -397,7 +427,7 @@ container build paths and proxy target were wrong.
 | Backend tests, SQLite | 112 passed, 10 skipped | Verified |
 | Production-config tests | 7 | Verified |
 | Smoke checks | 26 | Verified |
-| Browser tests | 47 across 4 specs | green run pending |
+| Browser tests | **47 passed, 0 failed** across 4 specs | Verified |
 | API operations | 93 across 80 paths | Verified |
 | Frontend routes | 27 | Verified |
 | Tables / foreign keys | 30 / 60 | Verified |
@@ -426,7 +456,6 @@ container build paths and proxy target were wrong.
 
 | # | Item | Blocker | To close |
 | --- | --- | --- | --- |
-| 1 | Green full browser run | last CI run predates the final test fixes | push and watch the `End-to-end (Playwright)` job |
 | 2 | Live public URL | no Docker daemon, no hosting credentials | build images, deploy behind TLS, re-walk the 15 steps, record the URL |
 | 3 | Docker build verification | no daemon | `docker compose up --build -d && docker compose ps` |
 | 4 | Design pages 2+ | reference pages unreachable | compare page by page and record differences |

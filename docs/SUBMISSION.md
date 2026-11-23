@@ -148,27 +148,37 @@ Then re-walk the fifteen judging steps against the public host and replace
 | Migrations | round-trip to base and back on SQLite **and** PostgreSQL 16 |
 | API surface | 80 paths, 93 operations, OpenAPI at `/api/docs` |
 | Routes | 27 pages; every real route answers 200 |
-| Browser suite | 47 tests across 4 specs × Chromium and Pixel 7 |
+| Browser suite | **47 passed, 0 failed** in CI across Chromium and Pixel 7 |
 | Security | bcrypt, CSRF, RBAC (4 roles × 26 permissions), rate limiting, audit log |
 | Production config | cookie Secure enforced, CORS wildcard withdrawn, weak secret refused |
 
 ### Defects found and fixed during this audit
 
-These are worth listing because they are the evidence the audit was real:
+These are worth listing because they are the evidence the audit was real.
 
-1. **The digital twin widened the page.** The canvas seeded a 900 px default width
+1. **"Solve & persist" never navigated.** The optimisation screen read
+   `response.plan` from a helper that returns the whole `{success, data}` envelope,
+   so the plan id was `undefined` and the route became
+   `/optimization/plans/undefined`. The plan was written to the database and the
+   user never saw it — the core A02 journey was broken for every user. Only the
+   browser suite caught it.
+2. **The digital twin widened the page.** The canvas seeded a 900 px default width
    and wrote it as an inline size before measuring its container, so `/twin` and
    `/simulation` overflowed by ~548 px on a phone and ~388 px on a desktop.
-   Caught by a browser test, not by eye.
-2. **`docker compose up` could never have started.** `web` waited on `api` being
+3. **A React render-time side effect.** The login form called `router.replace()`
+   during render; it now runs in an effect, which removes React's cross-component
+   update warning.
+4. **`docker compose up` could never have started.** `web` waited on `api` being
    healthy, and `api` declared no healthcheck.
-3. **A guessable secret flowed into production.** `SECRET_KEY` had a readable
+5. **A guessable secret flowed into production.** `SECRET_KEY` had a readable
    default while `ENVIRONMENT` defaulted to `production`.
-4. **Session cookies could ship without `Secure`.** `cookie_secure` defaulted to
+6. **Session cookies could ship without `Secure`.** `cookie_secure` defaulted to
    false and was not tied to the environment.
-5. **A wildcard CORS regex admitted any `*.e2b.app` origin** in every environment.
-6. **The initial migration was not portable to PostgreSQL**, and the container
+7. **A wildcard CORS regex admitted any `*.e2b.app` origin** in every environment.
+8. **The initial migration was not portable to PostgreSQL**, and the container
    build paths were wrong.
+9. **CI could not report browser-test failures at all**, which had to be fixed
+   before any of the above could be found.
 
 ### Corrections made to the test suite
 
