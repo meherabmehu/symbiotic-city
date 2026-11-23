@@ -32,8 +32,8 @@ test.describe("authentication", () => {
 
   test("bad credentials show an inline error and stay on the form", async ({ page }) => {
     await page.goto("/login");
-    await page.getByLabel("Email address").fill("nobody@symbiotic.city");
-    await page.getByLabel("Password").fill("WrongPass#2026");
+    await page.getByLabel(/^email address$/i).fill("nobody@symbiotic.city");
+    await page.getByLabel(/^password$/i).fill("WrongPass#2026");
     await page.getByRole("button", { name: /sign in/i }).click();
 
     await expect(page.getByRole("alert")).toBeVisible();
