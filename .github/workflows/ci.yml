@@ -109,7 +109,19 @@ jobs:
           test -x .venv/bin/python
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run e2e
+      # Do not fail the step here: the report must be summarised even when the
+      # run is red, otherwise the job ends with an unreadable exit code 1.
+      - name: Run browser tests
+        id: e2e
+        continue-on-error: true
+        working-directory: frontend
+        run: npm run e2e
+      # Turns the JSON report into check-run annotations, which (unlike logs and
+      # artifacts) can be read back through the GitHub API.
+      - name: Summarise results
+        if: always()
+        working-directory: .
+        run: python3 scripts/pw_summary.py
       # Always upload: the JSON report is what makes a failure diagnosable from
       # the artifact alone, without access to the raw job log.
       - uses: actions/upload-artifact@v4
