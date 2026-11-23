@@ -17,7 +17,7 @@ export async function login(page: Page, role: DemoRole = "operator", next?: stri
   await page.getByLabel(/^password$/i).fill(DEMO[role].password);
   await page.getByRole("button", { name: /sign in/i }).click();
 
-  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
   return page;
 }
 
@@ -33,6 +33,6 @@ export function trackConsoleErrors(page: Page): string[] {
 
 /** The authenticated shell renders a nav landmark and a main region. */
 export async function expectShell(page: Page) {
-  await expect(page.locator("main#main")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("main#main")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("navigation").first()).toBeVisible();
 }
