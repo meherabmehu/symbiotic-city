@@ -111,6 +111,7 @@ function LoginForm() {
         <LogIn className="h-4 w-4" aria-hidden /> Sign in
       </Button>
 
+      {DEMO_ACCOUNTS.length ? (
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-400">
           Demo accounts — one click sign in
@@ -134,10 +135,13 @@ function LoginForm() {
           ))}
         </div>
       </div>
+      ) : null}
+      {DEMO_ACCOUNTS.length ? (
       <p className="flex items-center gap-1.5 text-[11px] text-ink-500">
         <AlertCircle className="h-3.5 w-3.5" aria-hidden />
         Demo credentials are seeded accounts for the fictional city of Aurora Vale.
       </p>
+      ) : null}
     </form>
   );
 }
