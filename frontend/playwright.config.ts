@@ -19,7 +19,11 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   workers: 1,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // The json report is the machine-readable record; CI uploads it as an
+  // artifact so a failure can be diagnosed without the raw job log.
+  reporter: process.env.CI
+    ? [["list"], ["html", { open: "never" }], ["json", { outputFile: "test-results/results.json" }]]
+    : "list",
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3010",
     trace: "retain-on-failure",
