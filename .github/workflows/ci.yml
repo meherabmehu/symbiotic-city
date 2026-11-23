@@ -99,11 +99,14 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       # The venv must sit at the repository root: playwright.config.ts launches
-      # the API as ../.venv/bin/python from frontend/.
+      # the API as ../.venv/bin/python from frontend/. This job's default working
+      # directory is frontend/, so the path has to be stated explicitly.
       - name: Install backend
+        working-directory: .
         run: |
           python -m venv .venv
           .venv/bin/pip install -r backend/requirements.txt
+          test -x .venv/bin/python
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
