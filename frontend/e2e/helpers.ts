@@ -13,8 +13,8 @@ export type DemoRole = keyof typeof DEMO;
 export async function login(page: Page, role: DemoRole = "operator", next?: string) {
   await page.goto(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
 
-  await page.getByLabel("Email address").fill(DEMO[role].email);
-  await page.getByLabel("Password").fill(DEMO[role].password);
+  await page.getByLabel(/^email address$/i).fill(DEMO[role].email);
+  await page.getByLabel(/^password$/i).fill(DEMO[role].password);
   await page.getByRole("button", { name: /sign in/i }).click();
 
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });

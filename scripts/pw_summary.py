@@ -71,8 +71,12 @@ def main(argv: list[str]) -> int:
     failed = [t for t in tests if t["status"] != "passed"]
     print(f"::notice::Playwright: {len(tests) - len(failed)} passed, {len(failed)} failed, of {len(tests)} total")
     for test in failed:
-        first_line = (test["message"] or "no error message recorded").splitlines()[0][:280]
-        print(f"::error file={test['file']}::[{test['project']}] {test['title']} — {first_line}")
+        # The whole message, newlines folded, so the annotation alone is enough to
+        # diagnose the failure without access to the job log.
+        detail = " | ".join(
+            line.strip() for line in (test["message"] or "no error recorded").splitlines() if line.strip()
+        )[:1400]
+        print(f"::error file={test['file']}::[{test['project']}] {test['title']} — {detail}")
 
     if failed:
         print(f"\n{len(failed)} failing test(s):")
