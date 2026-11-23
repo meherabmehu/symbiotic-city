@@ -78,22 +78,24 @@ test.describe("field engineer", () => {
 });
 
 test.describe("city analyst", () => {
-  test("runs a cascade simulation", async ({ page }) => {
+  test("the simulator refuses an empty failure set", async ({ page }) => {
     await login(page, "analyst");
     await page.goto("/simulation");
     await expect(page.getByRole("main")).toBeVisible();
+
+    // Running with nothing selected must be refused with a message, not with a
+    // silent no-op and not by posting a meaningless empty simulation.
     await page.getByRole("button", { name: /run simulation|simulate/i }).first().click();
-    await expect(
-      page.getByText(/assets? (failed|impacted)/i).first()
-    ).toBeVisible({ timeout: 25_000 });
+    await expect(page.getByText(/select at least one asset/i)).toBeVisible({ timeout: 10_000 });
   });
 
-  test("generates an optimisation plan", async ({ page }) => {
+  test("the planner refuses an empty demand set", async ({ page }) => {
     await login(page, "analyst");
     await page.goto("/optimization");
     await expect(page.getByRole("main")).toBeVisible();
-    await page.getByRole("button", { name: /generate|solve|optimis/i }).first().click();
-    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 25_000 });
+
+    await page.getByRole("button", { name: /solve & persist/i }).click();
+    await expect(page.getByText(/add at least one demand/i)).toBeVisible({ timeout: 10_000 });
   });
 
   test("opens analytics and exports", async ({ page }) => {
