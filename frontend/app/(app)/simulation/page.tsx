@@ -230,7 +230,7 @@ function SimulationLab() {
         ]}
       />
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[420px_1fr]">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
         <div className="space-y-4">
           {tab === "setup" ? (
             <>
@@ -249,7 +249,11 @@ function SimulationLab() {
 
                   <div>
                     <p className="label">Initial failure assets ({selectedIds.length}/10)</p>
-                    <div className="max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-white/[0.02] p-2 scrollbar-slim">
+                    <div
+                      className="max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-white/[0.02] p-2 scrollbar-slim"
+                      role="group"
+                      aria-label="Initial failure assets"
+                    >
                       {(assets.data ?? []).length === 0 ? (
                         <p className="px-2 py-3 text-xs text-ink-500">No assets available.</p>
                       ) : (

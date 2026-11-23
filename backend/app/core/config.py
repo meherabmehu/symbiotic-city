@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -60,6 +60,39 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"production", "prod"}
+
+    @property
+    def effective_cookie_secure(self) -> bool:
+        """Never send a session cookie over plaintext in production.
+
+        The flag defaults to false so local HTTP development works without extra
+        setup, but inheriting that default into a production deployment would
+        ship a session cookie without the Secure attribute. Production wins here;
+        a deployment that genuinely needs plaintext HTTP has to change the
+        environment name, which is a deliberate act.
+        """
+        return self.cookie_secure or self.is_production
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        """Sandbox preview origins, honoured outside production only.
+
+        The pattern matches any *.e2b.app host, which is what makes a sandbox
+        preview work and is unacceptable as an allow-list entry on a public
+        deployment, so it is withdrawn once the environment is production.
+        """
+        if self.is_production:
+            return None
+        return r"https://.*\.e2b\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+|http://localhost"
+
+    @model_validator(mode="after")
+    def _refuse_default_secret_in_production(self) -> "Settings":
+        if self.is_production and self.secret_key == "dev-only-secret-change-me":
+            raise ValueError(
+                "SECRET_KEY is still the development default. Set a unique value "
+                "before running with ENVIRONMENT=production."
+            )
+        return self
 
     @property
     def sqlite_path(self) -> Path | None:

@@ -117,9 +117,20 @@ export const ROLE_LABELS: Record<Role, string> = {
   city_analyst: "City Analyst",
 };
 
-export const DEMO_ACCOUNTS: { role: Role; email: string; password: string; label: string }[] = [
+/**
+ * One-click demo sign-in. These are seeded accounts for the fictional city of
+ * Aurora Vale and they appear in this repository by design, but a public
+ * deployment should not advertise them, so the list is empty unless it is
+ * explicitly switched on with NEXT_PUBLIC_DEMO_LOGIN. The seeded users still
+ * exist either way; only the buttons disappear.
+ */
+export const DEMO_LOGIN_ENABLED = process.env.NEXT_PUBLIC_DEMO_LOGIN !== "0";
+
+const ALL_DEMO_ACCOUNTS: { role: Role; email: string; password: string; label: string }[] = [
   { role: "city_operator", email: "operator@symbiotic.city", password: "Operator#2026", label: "Watch Commander" },
   { role: "city_analyst", email: "analyst@symbiotic.city", password: "Analyst#2026", label: "Resilience Analyst" },
   { role: "field_engineer", email: "engineer@symbiotic.city", password: "Engineer#2026", label: "Grid Engineer" },
   { role: "super_admin", email: "admin@symbiotic.city", password: "Admin#2026", label: "Administrator" },
 ];
+
+export const DEMO_ACCOUNTS = DEMO_LOGIN_ENABLED ? ALL_DEMO_ACCOUNTS : [];

@@ -22,9 +22,10 @@ test.describe("operator journey", () => {
 
     const title = `E2E reported incident ${Date.now()}`;
     await page.getByRole("button", { name: /report incident|new incident/i }).first().click();
-    await page.getByLabel(/^title$/i).fill(title);
+    await page.getByLabel(/^title/i).fill(title);
     await page.getByLabel(/description/i).fill("Reported by the end-to-end suite.");
-    await page.getByLabel(/severity/i).selectOption("high");
+    // The page also has a "Filter by severity" select, so target the form field.
+    await page.locator("#inc-severity").selectOption("high");
     await page.getByRole("button", { name: /^(submit|report|create)/i }).last().click();
 
     await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 });
@@ -46,8 +47,14 @@ test.describe("operator journey", () => {
     await page.goto("/simulation");
     await expectShell(page);
 
+    // Nothing is selected by default, and run() correctly refuses to simulate an
+    // empty failure set, so pick the first asset as the initial failure.
+    const failureList = page.getByRole("group", { name: /initial failure assets/i });
+    await failureList.getByRole("checkbox").first().check();
+    await expect(failureList.getByRole("checkbox").first()).toBeChecked();
+
     await page.getByRole("button", { name: /run simulation|simulate/i }).first().click();
-    await expect(page.getByText(/assets? (failed|impacted)/i).first()).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByText(/assets failed/i).first()).toBeVisible({ timeout: 25_000 });
   });
 
   test("analyst can generate an optimisation plan", async ({ page }) => {
@@ -55,8 +62,43 @@ test.describe("operator journey", () => {
     await page.goto("/optimization");
     await expectShell(page);
 
-    await page.getByRole("button", { name: /generate|solve|optimis/i }).first().click();
-    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 40_000 });
+    // The solver refuses an empty demand set, so add one asset that needs power.
+    await expect(page.getByText(/0 assets ·/)).toBeVisible();
+    await page.getByRole("button", { name: /add demand/i }).click();
+
+    const demandDialog = page.getByRole("dialog", { name: /add a demand/i });
+    await expect(demandDialog).toBeVisible();
+    // Target an asset by its code: the dialog's first button is "Close dialog".
+    await demandDialog.getByRole("button", { name: /[A-Z]{2,3}-\d+/ }).first().click();
+
+    // The demand must actually land in the list before solving, otherwise the
+    // planner is asked to solve nothing and correctly refuses.
+    await expect(page.getByText(/1 assets ·/)).toBeVisible({ timeout: 10_000 });
+    // "Preview solve" also matches /solve/ and comes first in the DOM, so name the
+    // persist button exactly; otherwise the click lands on Preview.
+    const solveButton = page.getByRole("button", { name: /solve & persist/i });
+    await expect(solveButton).toBeEnabled();
+
+    // Watch the actual request rather than only the screen: if the solve is
+    // rejected, the test should report the API's status and body, not an
+    // anonymous navigation timeout.
+    const solveResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/optimization/requests") &&
+        response.request().method() === "POST",
+      { timeout: 25_000 },
+    );
+    await solveButton.click();
+
+    const response = await solveResponse;
+    if (!response.ok()) {
+      const detail = (await response.text()).slice(0, 600);
+      throw new Error(`The planner rejected the plan (${response.status()}): ${detail}`);
+    }
+
+    // A successful solve navigates to the persisted plan, whose header carries its code.
+    await page.waitForURL(/\/optimization\/plans\//, { timeout: 25_000 });
+    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("engineer sees an assigned task queue", async ({ page }) => {
@@ -68,17 +110,26 @@ test.describe("operator journey", () => {
 });
 
 test.describe("role separation", () => {
-  test("an engineer cannot reach the admin area", async ({ page }) => {
+  test("an engineer is refused the user management screen", async ({ page }) => {
     await login(page, "engineer");
-    await page.goto("/admin");
-    await expect(page.locator("main#main")).toContainText(/permission|not authorised|denied|restricted/i);
+    await page.goto("/admin/users");
+    await expect(page.locator("main#main")).toContainText(
+      /administrator access required|permission|not authorised|denied|restricted/i
+    );
   });
 
-  test("an operator can reach the admin area only if granted, and sees a clear message", async ({
-    page,
-  }) => {
+  test("an operator is refused the user management screen", async ({ page }) => {
     await login(page, "operator");
-    await page.goto("/admin");
-    await expect(page.locator("main#main")).toBeVisible();
+    await page.goto("/admin/users");
+    await expect(page.locator("main#main")).toContainText(
+      /administrator access required|permission|not authorised|denied|restricted/i
+    );
+  });
+
+  test("an engineer has no admin entries in the navigation", async ({ page }) => {
+    await login(page, "engineer");
+    await expectShell(page);
+    const nav = page.getByRole("navigation").first();
+    await expect(nav).not.toContainText(/user & role management|system audit logs/i);
   });
 });
