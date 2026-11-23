@@ -333,12 +333,8 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-6 py-6 text-xs text-ink-500 sm:flex-row">
           <div className="flex items-center gap-4">
             <span>© {year} SYMBIOTIC CITY</span>
-            <a href="#about" className="hover:text-ink-200">
-              Privacy
-            </a>
-            <a href="#about" className="hover:text-ink-200">
-              Terms
-            </a>
+            <span>Privacy</span>
+            <span>Terms</span>
           </div>
           <p>Synthetic demonstration data · fictional city of Aurora Vale</p>
         </div>

@@ -14,6 +14,27 @@ revision = '5260d3802c9d'
 down_revision = None
 branch_labels = None
 depends_on = None
+def _add_foreign_key(name, table, target, columns, remote_columns, ondelete=None):
+    """Add one foreign key, portably.
+
+    PostgreSQL can ALTER a table to add a constraint; SQLite cannot, so there the
+    constraint is added by rebuild-and-copy (Alembic's batch mode).
+    """
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table(table, recreate="always") as batch:
+            batch.create_foreign_key(name, target, columns, remote_columns, ondelete=ondelete)
+    else:
+        op.create_foreign_key(name, table, target, columns, remote_columns, ondelete=ondelete)
+
+
+def _drop_foreign_key(name, table):
+    """Mirror of _add_foreign_key.
+
+    On SQLite the constraint disappears with its table, and tables are dropped in
+    reverse creation order, so nothing is ever left referencing a dropped table.
+    """
+    if op.get_bind().dialect.name != "sqlite":
+        op.drop_constraint(name, table, type_="foreignkey")
 
 
 def upgrade() -> None:
@@ -29,80 +50,6 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('code')
-    )
-    op.create_table('incidents',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('title', sa.String(length=180), nullable=False),
-    sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('category', sa.String(length=40), nullable=False),
-    sa.Column('severity', sa.String(length=20), nullable=False),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('primary_asset_id', sa.Integer(), nullable=False),
-    sa.Column('reported_by_id', sa.Integer(), nullable=True),
-    sa.Column('assigned_operator_id', sa.Integer(), nullable=True),
-    sa.Column('affected_population', sa.Integer(), nullable=False),
-    sa.Column('simulation_run_id', sa.Integer(), nullable=True),
-    sa.Column('optimization_plan_id', sa.Integer(), nullable=True),
-    sa.Column('workflow_id', sa.Integer(), nullable=True),
-    sa.Column('reported_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('cancelled_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('resolution_notes', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['assigned_operator_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['optimization_plan_id'], ['optimization_plans.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['primary_asset_id'], ['infrastructure_assets.id'], ondelete='RESTRICT'),
-    sa.ForeignKeyConstraint(['reported_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['simulation_run_id'], ['simulation_runs.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['workflow_id'], ['workflow_instances.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_incident_code')
-    )
-    op.create_index('ix_incident_primary_asset', 'incidents', ['primary_asset_id'], unique=False)
-    op.create_index('ix_incident_status_severity', 'incidents', ['status', 'severity'], unique=False)
-    op.create_table('optimization_plans',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('request_id', sa.Integer(), nullable=False),
-    sa.Column('status', sa.String(length=30), nullable=False),
-    sa.Column('solution_status', sa.String(length=30), nullable=False),
-    sa.Column('objective_value', sa.Float(), nullable=False),
-    sa.Column('covered_demand', sa.Integer(), nullable=False),
-    sa.Column('total_demand', sa.Integer(), nullable=False),
-    sa.Column('coverage_percent', sa.Float(), nullable=False),
-    sa.Column('solver_wall_ms', sa.Integer(), nullable=False),
-    sa.Column('explanation_json', sa.Text(), nullable=False),
-    sa.Column('infeasibility_reason', sa.Text(), nullable=True),
-    sa.Column('approved_by_id', sa.Integer(), nullable=True),
-    sa.Column('approved_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('rejection_reason', sa.String(length=400), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['approved_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['request_id'], ['optimization_requests.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_optimization_plan_code')
-    )
-    op.create_index('ix_plan_status', 'optimization_plans', ['status'], unique=False)
-    op.create_table('optimization_requests',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('title', sa.String(length=200), nullable=False),
-    sa.Column('objective', sa.String(length=40), nullable=False),
-    sa.Column('incident_id', sa.Integer(), nullable=True),
-    sa.Column('simulation_run_id', sa.Integer(), nullable=True),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('demand_json', sa.Text(), nullable=False),
-    sa.Column('constraint_json', sa.Text(), nullable=False),
-    sa.Column('requested_by_id', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['requested_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['simulation_run_id'], ['simulation_runs.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_optimization_request_code')
     )
     op.create_table('permissions',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -120,31 +67,6 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('key')
     )
-    op.create_table('simulation_runs',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('name', sa.String(length=200), nullable=False),
-    sa.Column('scenario_id', sa.Integer(), nullable=True),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('failure_mode', sa.String(length=40), nullable=False),
-    sa.Column('initial_failure_ids_json', sa.Text(), nullable=False),
-    sa.Column('cascade_threshold', sa.Float(), nullable=False),
-    sa.Column('max_depth', sa.Integer(), nullable=False),
-    sa.Column('random_seed', sa.Integer(), nullable=False),
-    sa.Column('snapshot_json', sa.Text(), nullable=False),
-    sa.Column('summary_json', sa.Text(), nullable=False),
-    sa.Column('error_message', sa.Text(), nullable=True),
-    sa.Column('triggered_by_id', sa.Integer(), nullable=True),
-    sa.Column('incident_id', sa.Integer(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('duration_ms', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['scenario_id'], ['simulation_scenarios.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['triggered_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_simulation_code')
-    )
     op.create_table('users',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('email', sa.String(length=255), nullable=False),
@@ -160,380 +82,192 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
-    op.create_table('workflow_instances',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('workflow_type', sa.String(length=40), nullable=False),
-    sa.Column('title', sa.String(length=200), nullable=False),
-    sa.Column('status', sa.String(length=30), nullable=False),
-    sa.Column('current_step', sa.String(length=60), nullable=False),
-    sa.Column('completed_steps_json', sa.Text(), nullable=False),
-    sa.Column('incident_id', sa.Integer(), nullable=True),
-    sa.Column('simulation_run_id', sa.Integer(), nullable=True),
-    sa.Column('plan_id', sa.Integer(), nullable=True),
-    sa.Column('failure_step', sa.String(length=60), nullable=True),
-    sa.Column('failure_reason', sa.Text(), nullable=True),
-    sa.Column('retry_count', sa.Integer(), nullable=False),
-    sa.Column('started_by_id', sa.Integer(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['plan_id'], ['optimization_plans.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['simulation_run_id'], ['simulation_runs.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['started_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_workflow_code')
-    )
-    op.create_table('audit_logs',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('actor_id', sa.Integer(), nullable=True),
-    sa.Column('actor_email', sa.String(length=255), nullable=False),
-    sa.Column('actor_role', sa.String(length=40), nullable=False),
-    sa.Column('action', sa.String(length=80), nullable=False),
-    sa.Column('resource_type', sa.String(length=60), nullable=False),
-    sa.Column('resource_id', sa.String(length=60), nullable=True),
-    sa.Column('outcome', sa.String(length=20), nullable=False),
-    sa.Column('message', sa.String(length=500), nullable=False),
-    sa.Column('metadata_json', sa.Text(), nullable=False),
-    sa.Column('ip_address', sa.String(length=64), nullable=True),
-    sa.Column('user_agent', sa.String(length=255), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['actor_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('audit_logs', sa.Column('id', sa.Integer(), nullable=False), sa.Column('actor_id', sa.Integer(), nullable=True), sa.Column('actor_email', sa.String(length=255), nullable=False), sa.Column('actor_role', sa.String(length=40), nullable=False), sa.Column('action', sa.String(length=80), nullable=False), sa.Column('resource_type', sa.String(length=60), nullable=False), sa.Column('resource_id', sa.String(length=60), nullable=True), sa.Column('outcome', sa.String(length=20), nullable=False), sa.Column('message', sa.String(length=500), nullable=False), sa.Column('metadata_json', sa.Text(), nullable=False), sa.Column('ip_address', sa.String(length=64), nullable=True), sa.Column('user_agent', sa.String(length=255), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'))
     op.create_index('ix_audit_action_time', 'audit_logs', ['action', 'created_at'], unique=False)
     op.create_index('ix_audit_actor_time', 'audit_logs', ['actor_id', 'created_at'], unique=False)
-    op.create_table('idempotency_keys',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('key', sa.String(length=120), nullable=False),
-    sa.Column('scope', sa.String(length=60), nullable=False),
-    sa.Column('response_json', sa.Text(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('key', name='uq_idempotency_key')
-    )
-    op.create_table('incident_events',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('incident_id', sa.Integer(), nullable=False),
-    sa.Column('event_type', sa.String(length=40), nullable=False),
-    sa.Column('from_status', sa.String(length=20), nullable=True),
-    sa.Column('to_status', sa.String(length=20), nullable=True),
-    sa.Column('message', sa.String(length=400), nullable=False),
-    sa.Column('actor_id', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['actor_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index('ix_incident_event_incident', 'incident_events', ['incident_id', 'created_at'], unique=False)
-    op.create_table('infrastructure_assets',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('name', sa.String(length=140), nullable=False),
-    sa.Column('category', sa.String(length=40), nullable=False),
-    sa.Column('zone_id', sa.Integer(), nullable=True),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('criticality', sa.Integer(), nullable=False),
-    sa.Column('capacity', sa.Float(), nullable=False),
-    sa.Column('capacity_unit', sa.String(length=30), nullable=False),
-    sa.Column('load_percent', sa.Float(), nullable=False),
-    sa.Column('latitude', sa.Float(), nullable=False),
-    sa.Column('longitude', sa.Float(), nullable=False),
-    sa.Column('map_x', sa.Float(), nullable=False),
-    sa.Column('map_y', sa.Float(), nullable=False),
-    sa.Column('built_year', sa.Integer(), nullable=True),
-    sa.Column('last_inspection_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('notes', sa.Text(), nullable=True),
-    sa.Column('is_archived', sa.Boolean(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.CheckConstraint('capacity >= 0', name='ck_asset_capacity_positive'),
-    sa.CheckConstraint('load_percent >= 0 AND load_percent <= 100', name='ck_asset_load_range'),
-    sa.ForeignKeyConstraint(['zone_id'], ['city_zones.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_asset_code')
-    )
+    op.create_table('idempotency_keys', sa.Column('id', sa.Integer(), nullable=False), sa.Column('key', sa.String(length=120), nullable=False), sa.Column('scope', sa.String(length=60), nullable=False), sa.Column('response_json', sa.Text(), nullable=False), sa.Column('user_id', sa.Integer(), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('key', name='uq_idempotency_key'))
+    op.create_table('infrastructure_assets', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('name', sa.String(length=140), nullable=False), sa.Column('category', sa.String(length=40), nullable=False), sa.Column('zone_id', sa.Integer(), nullable=True), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('criticality', sa.Integer(), nullable=False), sa.Column('capacity', sa.Float(), nullable=False), sa.Column('capacity_unit', sa.String(length=30), nullable=False), sa.Column('load_percent', sa.Float(), nullable=False), sa.Column('latitude', sa.Float(), nullable=False), sa.Column('longitude', sa.Float(), nullable=False), sa.Column('map_x', sa.Float(), nullable=False), sa.Column('map_y', sa.Float(), nullable=False), sa.Column('built_year', sa.Integer(), nullable=True), sa.Column('last_inspection_at', sa.DateTime(timezone=True), nullable=True), sa.Column('notes', sa.Text(), nullable=True), sa.Column('is_archived', sa.Boolean(), nullable=False), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.CheckConstraint('capacity >= 0', name='ck_asset_capacity_positive'), sa.CheckConstraint('load_percent >= 0 AND load_percent <= 100', name='ck_asset_load_range'), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_asset_code'))
     op.create_index('ix_asset_category_status', 'infrastructure_assets', ['category', 'status'], unique=False)
     op.create_index(op.f('ix_infrastructure_assets_category'), 'infrastructure_assets', ['category'], unique=False)
     op.create_index(op.f('ix_infrastructure_assets_zone_id'), 'infrastructure_assets', ['zone_id'], unique=False)
-    op.create_table('notifications',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('title', sa.String(length=200), nullable=False),
-    sa.Column('body', sa.Text(), nullable=False),
-    sa.Column('category', sa.String(length=40), nullable=False),
-    sa.Column('severity', sa.String(length=20), nullable=False),
-    sa.Column('link', sa.String(length=240), nullable=True),
-    sa.Column('entity_type', sa.String(length=40), nullable=True),
-    sa.Column('entity_id', sa.Integer(), nullable=True),
-    sa.Column('is_read', sa.Boolean(), nullable=False),
-    sa.Column('read_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('notifications', sa.Column('id', sa.Integer(), nullable=False), sa.Column('user_id', sa.Integer(), nullable=False), sa.Column('title', sa.String(length=200), nullable=False), sa.Column('body', sa.Text(), nullable=False), sa.Column('category', sa.String(length=40), nullable=False), sa.Column('severity', sa.String(length=20), nullable=False), sa.Column('link', sa.String(length=240), nullable=True), sa.Column('entity_type', sa.String(length=40), nullable=True), sa.Column('entity_id', sa.Integer(), nullable=True), sa.Column('is_read', sa.Boolean(), nullable=False), sa.Column('read_at', sa.DateTime(timezone=True), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'))
     op.create_index('ix_notification_user_read', 'notifications', ['user_id', 'is_read', 'created_at'], unique=False)
-    op.create_table('password_reset_tokens',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('token_hash', sa.String(length=128), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('used_at', sa.DateTime(timezone=True), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('token_hash')
-    )
+    op.create_table('optimization_plans', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('request_id', sa.Integer(), nullable=False), sa.Column('status', sa.String(length=30), nullable=False), sa.Column('solution_status', sa.String(length=30), nullable=False), sa.Column('objective_value', sa.Float(), nullable=False), sa.Column('covered_demand', sa.Integer(), nullable=False), sa.Column('total_demand', sa.Integer(), nullable=False), sa.Column('coverage_percent', sa.Float(), nullable=False), sa.Column('solver_wall_ms', sa.Integer(), nullable=False), sa.Column('explanation_json', sa.Text(), nullable=False), sa.Column('infeasibility_reason', sa.Text(), nullable=True), sa.Column('approved_by_id', sa.Integer(), nullable=True), sa.Column('approved_at', sa.DateTime(timezone=True), nullable=True), sa.Column('rejection_reason', sa.String(length=400), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_optimization_plan_code'))
+    op.create_index('ix_plan_status', 'optimization_plans', ['status'], unique=False)
+    op.create_table('optimization_requests', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('title', sa.String(length=200), nullable=False), sa.Column('objective', sa.String(length=40), nullable=False), sa.Column('incident_id', sa.Integer(), nullable=True), sa.Column('simulation_run_id', sa.Integer(), nullable=True), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('demand_json', sa.Text(), nullable=False), sa.Column('constraint_json', sa.Text(), nullable=False), sa.Column('requested_by_id', sa.Integer(), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_optimization_request_code'))
+    op.create_table('password_reset_tokens', sa.Column('id', sa.Integer(), nullable=False), sa.Column('user_id', sa.Integer(), nullable=False), sa.Column('token_hash', sa.String(length=128), nullable=False), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False), sa.Column('used_at', sa.DateTime(timezone=True), nullable=True), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('token_hash'))
     op.create_index('ix_password_reset_user', 'password_reset_tokens', ['user_id'], unique=False)
-    op.create_table('resources',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('name', sa.String(length=140), nullable=False),
-    sa.Column('category', sa.String(length=40), nullable=False),
-    sa.Column('capacity', sa.Numeric(precision=10, scale=2), nullable=False),
-    sa.Column('capacity_unit', sa.String(length=30), nullable=False),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('home_zone_id', sa.Integer(), nullable=True),
-    sa.Column('hourly_cost', sa.Integer(), nullable=False),
-    sa.Column('mobilisation_minutes', sa.Integer(), nullable=False),
-    sa.Column('notes', sa.Text(), nullable=True),
-    sa.Column('is_archived', sa.Boolean(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.CheckConstraint('capacity > 0', name='ck_resource_capacity_positive'),
-    sa.ForeignKeyConstraint(['home_zone_id'], ['city_zones.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_resource_code')
-    )
+    op.create_table('resources', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('name', sa.String(length=140), nullable=False), sa.Column('category', sa.String(length=40), nullable=False), sa.Column('capacity', sa.Numeric(precision=10, scale=2), nullable=False), sa.Column('capacity_unit', sa.String(length=30), nullable=False), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('home_zone_id', sa.Integer(), nullable=True), sa.Column('hourly_cost', sa.Integer(), nullable=False), sa.Column('mobilisation_minutes', sa.Integer(), nullable=False), sa.Column('notes', sa.Text(), nullable=True), sa.Column('is_archived', sa.Boolean(), nullable=False), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.CheckConstraint('capacity > 0', name='ck_resource_capacity_positive'), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_resource_code'))
     op.create_index('ix_resource_category_status', 'resources', ['category', 'status'], unique=False)
     op.create_index(op.f('ix_resources_category'), 'resources', ['category'], unique=False)
-    op.create_table('role_permissions',
-    sa.Column('role_id', sa.Integer(), nullable=False),
-    sa.Column('permission_id', sa.Integer(), nullable=False),
-    sa.ForeignKeyConstraint(['permission_id'], ['permissions.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['role_id'], ['roles.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('role_id', 'permission_id')
-    )
-    op.create_table('sessions',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('session_id', sa.String(length=64), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('issued_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('ip_address', sa.String(length=64), nullable=True),
-    sa.Column('user_agent', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('role_permissions', sa.Column('role_id', sa.Integer(), nullable=False), sa.Column('permission_id', sa.Integer(), nullable=False), sa.PrimaryKeyConstraint('role_id', 'permission_id'))
+    op.create_table('sessions', sa.Column('id', sa.Integer(), nullable=False), sa.Column('session_id', sa.String(length=64), nullable=False), sa.Column('user_id', sa.Integer(), nullable=False), sa.Column('issued_at', sa.DateTime(timezone=True), nullable=False), sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False), sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True), sa.Column('ip_address', sa.String(length=64), nullable=True), sa.Column('user_agent', sa.String(length=255), nullable=True), sa.PrimaryKeyConstraint('id'))
     op.create_index(op.f('ix_sessions_session_id'), 'sessions', ['session_id'], unique=True)
     op.create_index(op.f('ix_sessions_user_id'), 'sessions', ['user_id'], unique=False)
-    op.create_table('simulation_scenarios',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('name', sa.String(length=160), nullable=False),
-    sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('failure_mode', sa.String(length=40), nullable=False),
-    sa.Column('initial_failure_ids_json', sa.Text(), nullable=False),
-    sa.Column('cascade_threshold', sa.Float(), nullable=False),
-    sa.Column('max_depth', sa.Integer(), nullable=False),
-    sa.Column('random_seed', sa.Integer(), nullable=False),
-    sa.Column('is_template', sa.Boolean(), nullable=False),
-    sa.Column('created_by_id', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_table('system_settings',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('key', sa.String(length=80), nullable=False),
-    sa.Column('value', sa.String(length=500), nullable=False),
-    sa.Column('label', sa.String(length=160), nullable=False),
-    sa.Column('description', sa.String(length=400), nullable=False),
-    sa.Column('section', sa.String(length=60), nullable=False),
-    sa.Column('value_type', sa.String(length=20), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_by_id', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['updated_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('key', name='uq_system_setting_key')
-    )
-    op.create_table('user_roles',
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('role_id', sa.Integer(), nullable=False),
-    sa.Column('granted_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['role_id'], ['roles.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('user_id', 'role_id')
-    )
-    op.create_table('workflow_events',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('workflow_id', sa.Integer(), nullable=False),
-    sa.Column('step', sa.String(length=60), nullable=False),
-    sa.Column('attempt', sa.Integer(), nullable=False),
-    sa.Column('outcome', sa.String(length=20), nullable=False),
-    sa.Column('message', sa.Text(), nullable=False),
-    sa.Column('data_json', sa.Text(), nullable=False),
-    sa.Column('actor_id', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['actor_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['workflow_id'], ['workflow_instances.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('workflow_id', 'step', 'attempt', name='uq_workflow_event_step_attempt')
-    )
-    op.create_index('ix_workflow_event_wf', 'workflow_events', ['workflow_id', 'created_at'], unique=False)
-    op.create_table('incident_assets',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('incident_id', sa.Integer(), nullable=False),
-    sa.Column('asset_id', sa.Integer(), nullable=False),
-    sa.Column('impact_level', sa.String(length=20), nullable=False),
-    sa.Column('impact_score', sa.Double(), nullable=False),
-    sa.ForeignKeyConstraint(['asset_id'], ['infrastructure_assets.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('incident_id', 'asset_id', name='uq_incident_asset')
-    )
-    op.create_table('infrastructure_dependencies',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('source_asset_id', sa.Integer(), nullable=False),
-    sa.Column('target_asset_id', sa.Integer(), nullable=False),
-    sa.Column('dependency_type', sa.String(length=40), nullable=False),
-    sa.Column('impact_weight', sa.Float(), nullable=False),
-    sa.Column('redundancy', sa.Float(), nullable=False),
-    sa.Column('description', sa.String(length=240), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.CheckConstraint('source_asset_id <> target_asset_id', name='ck_no_self_dependency'),
-    sa.ForeignKeyConstraint(['source_asset_id'], ['infrastructure_assets.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['target_asset_id'], ['infrastructure_assets.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('source_asset_id', 'target_asset_id', name='uq_dependency_edge')
-    )
+    op.create_table('simulation_scenarios', sa.Column('id', sa.Integer(), nullable=False), sa.Column('name', sa.String(length=160), nullable=False), sa.Column('description', sa.Text(), nullable=False), sa.Column('failure_mode', sa.String(length=40), nullable=False), sa.Column('initial_failure_ids_json', sa.Text(), nullable=False), sa.Column('cascade_threshold', sa.Float(), nullable=False), sa.Column('max_depth', sa.Integer(), nullable=False), sa.Column('random_seed', sa.Integer(), nullable=False), sa.Column('is_template', sa.Boolean(), nullable=False), sa.Column('created_by_id', sa.Integer(), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'))
+    op.create_table('system_settings', sa.Column('id', sa.Integer(), nullable=False), sa.Column('key', sa.String(length=80), nullable=False), sa.Column('value', sa.String(length=500), nullable=False), sa.Column('label', sa.String(length=160), nullable=False), sa.Column('description', sa.String(length=400), nullable=False), sa.Column('section', sa.String(length=60), nullable=False), sa.Column('value_type', sa.String(length=20), nullable=False), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.Column('updated_by_id', sa.Integer(), nullable=True), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('key', name='uq_system_setting_key'))
+    op.create_table('user_roles', sa.Column('user_id', sa.Integer(), nullable=False), sa.Column('role_id', sa.Integer(), nullable=False), sa.Column('granted_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('user_id', 'role_id'))
+    op.create_table('workflow_instances', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('workflow_type', sa.String(length=40), nullable=False), sa.Column('title', sa.String(length=200), nullable=False), sa.Column('status', sa.String(length=30), nullable=False), sa.Column('current_step', sa.String(length=60), nullable=False), sa.Column('completed_steps_json', sa.Text(), nullable=False), sa.Column('incident_id', sa.Integer(), nullable=True), sa.Column('simulation_run_id', sa.Integer(), nullable=True), sa.Column('plan_id', sa.Integer(), nullable=True), sa.Column('failure_step', sa.String(length=60), nullable=True), sa.Column('failure_reason', sa.Text(), nullable=True), sa.Column('retry_count', sa.Integer(), nullable=False), sa.Column('started_by_id', sa.Integer(), nullable=True), sa.Column('started_at', sa.DateTime(timezone=True), nullable=False), sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_workflow_code'))
+    op.create_table('incidents', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('title', sa.String(length=180), nullable=False), sa.Column('description', sa.Text(), nullable=False), sa.Column('category', sa.String(length=40), nullable=False), sa.Column('severity', sa.String(length=20), nullable=False), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('primary_asset_id', sa.Integer(), nullable=False), sa.Column('reported_by_id', sa.Integer(), nullable=True), sa.Column('assigned_operator_id', sa.Integer(), nullable=True), sa.Column('affected_population', sa.Integer(), nullable=False), sa.Column('simulation_run_id', sa.Integer(), nullable=True), sa.Column('optimization_plan_id', sa.Integer(), nullable=True), sa.Column('workflow_id', sa.Integer(), nullable=True), sa.Column('reported_at', sa.DateTime(timezone=True), nullable=False), sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True), sa.Column('cancelled_at', sa.DateTime(timezone=True), nullable=True), sa.Column('resolution_notes', sa.Text(), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_incident_code'))
+    op.create_index('ix_incident_primary_asset', 'incidents', ['primary_asset_id'], unique=False)
+    op.create_index('ix_incident_status_severity', 'incidents', ['status', 'severity'], unique=False)
+    op.create_table('infrastructure_dependencies', sa.Column('id', sa.Integer(), nullable=False), sa.Column('source_asset_id', sa.Integer(), nullable=False), sa.Column('target_asset_id', sa.Integer(), nullable=False), sa.Column('dependency_type', sa.String(length=40), nullable=False), sa.Column('impact_weight', sa.Float(), nullable=False), sa.Column('redundancy', sa.Float(), nullable=False), sa.Column('description', sa.String(length=240), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.CheckConstraint('source_asset_id <> target_asset_id', name='ck_no_self_dependency'), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('source_asset_id', 'target_asset_id', name='uq_dependency_edge'))
     op.create_index('ix_dependency_source', 'infrastructure_dependencies', ['source_asset_id'], unique=False)
     op.create_index('ix_dependency_target', 'infrastructure_dependencies', ['target_asset_id'], unique=False)
-    op.create_table('infrastructure_status_history',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('asset_id', sa.Integer(), nullable=False),
-    sa.Column('previous_status', sa.String(length=20), nullable=True),
-    sa.Column('new_status', sa.String(length=20), nullable=False),
-    sa.Column('reason', sa.String(length=300), nullable=True),
-    sa.Column('changed_by_id', sa.Integer(), nullable=True),
-    sa.Column('changed_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['asset_id'], ['infrastructure_assets.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['changed_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('infrastructure_status_history', sa.Column('id', sa.Integer(), nullable=False), sa.Column('asset_id', sa.Integer(), nullable=False), sa.Column('previous_status', sa.String(length=20), nullable=True), sa.Column('new_status', sa.String(length=20), nullable=False), sa.Column('reason', sa.String(length=300), nullable=True), sa.Column('changed_by_id', sa.Integer(), nullable=True), sa.Column('changed_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'))
     op.create_index('ix_status_history_asset_time', 'infrastructure_status_history', ['asset_id', 'changed_at'], unique=False)
-    op.create_table('repair_tasks',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=30), nullable=False),
-    sa.Column('title', sa.String(length=180), nullable=False),
-    sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('priority', sa.Integer(), nullable=False),
-    sa.Column('incident_id', sa.Integer(), nullable=True),
-    sa.Column('asset_id', sa.Integer(), nullable=False),
-    sa.Column('assignee_id', sa.Integer(), nullable=True),
-    sa.Column('created_by_id', sa.Integer(), nullable=True),
-    sa.Column('verification_by_id', sa.Integer(), nullable=True),
-    sa.Column('estimated_hours', sa.Double(), nullable=False),
-    sa.Column('actual_hours', sa.Double(), nullable=True),
-    sa.Column('rejection_reason', sa.String(length=400), nullable=True),
-    sa.Column('completion_notes', sa.Text(), nullable=True),
-    sa.Column('due_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('assigned_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('accepted_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('verified_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['asset_id'], ['infrastructure_assets.id'], ondelete='RESTRICT'),
-    sa.ForeignKeyConstraint(['assignee_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['incident_id'], ['incidents.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['verification_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('code', name='uq_task_code')
-    )
+    op.create_table('simulation_runs', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('name', sa.String(length=200), nullable=False), sa.Column('scenario_id', sa.Integer(), nullable=True), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('failure_mode', sa.String(length=40), nullable=False), sa.Column('initial_failure_ids_json', sa.Text(), nullable=False), sa.Column('cascade_threshold', sa.Float(), nullable=False), sa.Column('max_depth', sa.Integer(), nullable=False), sa.Column('random_seed', sa.Integer(), nullable=False), sa.Column('snapshot_json', sa.Text(), nullable=False), sa.Column('summary_json', sa.Text(), nullable=False), sa.Column('error_message', sa.Text(), nullable=True), sa.Column('triggered_by_id', sa.Integer(), nullable=True), sa.Column('incident_id', sa.Integer(), nullable=True), sa.Column('started_at', sa.DateTime(timezone=True), nullable=False), sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True), sa.Column('duration_ms', sa.Integer(), nullable=True), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_simulation_code'))
+    op.create_table('workflow_events', sa.Column('id', sa.Integer(), nullable=False), sa.Column('workflow_id', sa.Integer(), nullable=False), sa.Column('step', sa.String(length=60), nullable=False), sa.Column('attempt', sa.Integer(), nullable=False), sa.Column('outcome', sa.String(length=20), nullable=False), sa.Column('message', sa.Text(), nullable=False), sa.Column('data_json', sa.Text(), nullable=False), sa.Column('actor_id', sa.Integer(), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('workflow_id', 'step', 'attempt', name='uq_workflow_event_step_attempt'))
+    op.create_index('ix_workflow_event_wf', 'workflow_events', ['workflow_id', 'created_at'], unique=False)
+    op.create_table('incident_assets', sa.Column('id', sa.Integer(), nullable=False), sa.Column('incident_id', sa.Integer(), nullable=False), sa.Column('asset_id', sa.Integer(), nullable=False), sa.Column('impact_level', sa.String(length=20), nullable=False), sa.Column('impact_score', sa.Double(), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('incident_id', 'asset_id', name='uq_incident_asset'))
+    op.create_table('incident_events', sa.Column('id', sa.Integer(), nullable=False), sa.Column('incident_id', sa.Integer(), nullable=False), sa.Column('event_type', sa.String(length=40), nullable=False), sa.Column('from_status', sa.String(length=20), nullable=True), sa.Column('to_status', sa.String(length=20), nullable=True), sa.Column('message', sa.String(length=400), nullable=False), sa.Column('actor_id', sa.Integer(), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'))
+    op.create_index('ix_incident_event_incident', 'incident_events', ['incident_id', 'created_at'], unique=False)
+    op.create_table('repair_tasks', sa.Column('id', sa.Integer(), nullable=False), sa.Column('code', sa.String(length=30), nullable=False), sa.Column('title', sa.String(length=180), nullable=False), sa.Column('description', sa.Text(), nullable=False), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('priority', sa.Integer(), nullable=False), sa.Column('incident_id', sa.Integer(), nullable=True), sa.Column('asset_id', sa.Integer(), nullable=False), sa.Column('assignee_id', sa.Integer(), nullable=True), sa.Column('created_by_id', sa.Integer(), nullable=True), sa.Column('verification_by_id', sa.Integer(), nullable=True), sa.Column('estimated_hours', sa.Double(), nullable=False), sa.Column('actual_hours', sa.Double(), nullable=True), sa.Column('rejection_reason', sa.String(length=400), nullable=True), sa.Column('completion_notes', sa.Text(), nullable=True), sa.Column('due_at', sa.DateTime(timezone=True), nullable=True), sa.Column('assigned_at', sa.DateTime(timezone=True), nullable=True), sa.Column('accepted_at', sa.DateTime(timezone=True), nullable=True), sa.Column('started_at', sa.DateTime(timezone=True), nullable=True), sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True), sa.Column('verified_at', sa.DateTime(timezone=True), nullable=True), sa.Column('created_at', sa.DateTime(timezone=True), nullable=False), sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'), sa.UniqueConstraint('code', name='uq_task_code'))
     op.create_index(op.f('ix_repair_tasks_assignee_id'), 'repair_tasks', ['assignee_id'], unique=False)
     op.create_index(op.f('ix_repair_tasks_incident_id'), 'repair_tasks', ['incident_id'], unique=False)
     op.create_index('ix_task_assignee_status', 'repair_tasks', ['assignee_id', 'status'], unique=False)
     op.create_index('ix_task_incident', 'repair_tasks', ['incident_id'], unique=False)
-    op.create_table('simulation_results',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('run_id', sa.Integer(), nullable=False),
-    sa.Column('asset_id', sa.Integer(), nullable=False),
-    sa.Column('impact_level', sa.String(length=20), nullable=False),
-    sa.Column('depth', sa.Integer(), nullable=False),
-    sa.Column('impact_score', sa.Float(), nullable=False),
-    sa.Column('capacity_loss_percent', sa.Float(), nullable=False),
-    sa.Column('affected_population', sa.Integer(), nullable=False),
-    sa.Column('cause_asset_id', sa.Integer(), nullable=True),
-    sa.Column('explanation', sa.String(length=400), nullable=False),
-    sa.ForeignKeyConstraint(['asset_id'], ['infrastructure_assets.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['cause_asset_id'], ['infrastructure_assets.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['run_id'], ['simulation_runs.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('simulation_results', sa.Column('id', sa.Integer(), nullable=False), sa.Column('run_id', sa.Integer(), nullable=False), sa.Column('asset_id', sa.Integer(), nullable=False), sa.Column('impact_level', sa.String(length=20), nullable=False), sa.Column('depth', sa.Integer(), nullable=False), sa.Column('impact_score', sa.Float(), nullable=False), sa.Column('capacity_loss_percent', sa.Float(), nullable=False), sa.Column('affected_population', sa.Integer(), nullable=False), sa.Column('cause_asset_id', sa.Integer(), nullable=True), sa.Column('explanation', sa.String(length=400), nullable=False), sa.PrimaryKeyConstraint('id'))
     op.create_index('ix_sim_result_run', 'simulation_results', ['run_id', 'depth'], unique=False)
-    op.create_table('optimization_assignments',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('plan_id', sa.Integer(), nullable=False),
-    sa.Column('asset_id', sa.Integer(), nullable=False),
-    sa.Column('resource_id', sa.Integer(), nullable=False),
-    sa.Column('quantity', sa.Float(), nullable=False),
-    sa.Column('priority_weight', sa.Integer(), nullable=False),
-    sa.Column('contribution', sa.Float(), nullable=False),
-    sa.Column('served', sa.Boolean(), nullable=False),
-    sa.Column('rationale', sa.String(length=400), nullable=False),
-    sa.Column('repair_task_id', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['asset_id'], ['infrastructure_assets.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['plan_id'], ['optimization_plans.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['repair_task_id'], ['repair_tasks.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['resource_id'], ['resources.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_table('resource_reservations',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('resource_id', sa.Integer(), nullable=False),
-    sa.Column('repair_task_id', sa.Integer(), nullable=True),
-    sa.Column('plan_id', sa.Integer(), nullable=True),
-    sa.Column('workflow_id', sa.Integer(), nullable=True),
-    sa.Column('quantity', sa.Numeric(precision=10, scale=2), nullable=False),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('reserved_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('released_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('release_reason', sa.String(length=240), nullable=True),
-    sa.Column('reserved_by_id', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['plan_id'], ['optimization_plans.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['repair_task_id'], ['repair_tasks.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['reserved_by_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['resource_id'], ['resources.id'], ondelete='RESTRICT'),
-    sa.ForeignKeyConstraint(['workflow_id'], ['workflow_instances.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('optimization_assignments', sa.Column('id', sa.Integer(), nullable=False), sa.Column('plan_id', sa.Integer(), nullable=False), sa.Column('asset_id', sa.Integer(), nullable=False), sa.Column('resource_id', sa.Integer(), nullable=False), sa.Column('quantity', sa.Float(), nullable=False), sa.Column('priority_weight', sa.Integer(), nullable=False), sa.Column('contribution', sa.Float(), nullable=False), sa.Column('served', sa.Boolean(), nullable=False), sa.Column('rationale', sa.String(length=400), nullable=False), sa.Column('repair_task_id', sa.Integer(), nullable=True), sa.PrimaryKeyConstraint('id'))
+    op.create_table('resource_reservations', sa.Column('id', sa.Integer(), nullable=False), sa.Column('resource_id', sa.Integer(), nullable=False), sa.Column('repair_task_id', sa.Integer(), nullable=True), sa.Column('plan_id', sa.Integer(), nullable=True), sa.Column('workflow_id', sa.Integer(), nullable=True), sa.Column('quantity', sa.Numeric(precision=10, scale=2), nullable=False), sa.Column('status', sa.String(length=20), nullable=False), sa.Column('reserved_at', sa.DateTime(timezone=True), nullable=False), sa.Column('released_at', sa.DateTime(timezone=True), nullable=True), sa.Column('release_reason', sa.String(length=240), nullable=True), sa.Column('reserved_by_id', sa.Integer(), nullable=True), sa.PrimaryKeyConstraint('id'))
     op.create_index('ix_reservation_resource_status', 'resource_reservations', ['resource_id', 'status'], unique=False)
     op.create_index('ix_reservation_task', 'resource_reservations', ['repair_task_id'], unique=False)
-    op.create_table('task_status_history',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('task_id', sa.Integer(), nullable=False),
-    sa.Column('from_status', sa.String(length=20), nullable=True),
-    sa.Column('to_status', sa.String(length=20), nullable=False),
-    sa.Column('note', sa.String(length=400), nullable=True),
-    sa.Column('actor_id', sa.Integer(), nullable=True),
-    sa.Column('changed_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['actor_id'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['task_id'], ['repair_tasks.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
+    op.create_table('task_status_history', sa.Column('id', sa.Integer(), nullable=False), sa.Column('task_id', sa.Integer(), nullable=False), sa.Column('from_status', sa.String(length=20), nullable=True), sa.Column('to_status', sa.String(length=20), nullable=False), sa.Column('note', sa.String(length=400), nullable=True), sa.Column('actor_id', sa.Integer(), nullable=True), sa.Column('changed_at', sa.DateTime(timezone=True), nullable=False), sa.PrimaryKeyConstraint('id'))
     op.create_index(op.f('ix_task_status_history_task_id'), 'task_status_history', ['task_id'], unique=False)
+
+    # Foreign keys are added only after every table exists: PostgreSQL
+    # validates the referenced table at DDL time and this schema contains
+    # circular references (incidents <-> plans <-> runs), so they cannot be
+    # declared inline in an order that works everywhere.
+    _add_foreign_key('fk_audit_logs_actor_id', 'audit_logs', 'users', ['actor_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_idempotency_keys_user_id', 'idempotency_keys', 'users', ['user_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_infrastructure_assets_zone_id', 'infrastructure_assets', 'city_zones', ['zone_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_notifications_user_id', 'notifications', 'users', ['user_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_optimization_plans_approved_by_id', 'optimization_plans', 'users', ['approved_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_optimization_plans_request_id', 'optimization_plans', 'optimization_requests', ['request_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_optimization_requests_incident_id', 'optimization_requests', 'incidents', ['incident_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_optimization_requests_requested_by_id', 'optimization_requests', 'users', ['requested_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_optimization_requests_simulation_run_id', 'optimization_requests', 'simulation_runs', ['simulation_run_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_password_reset_tokens_user_id', 'password_reset_tokens', 'users', ['user_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_resources_home_zone_id', 'resources', 'city_zones', ['home_zone_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_role_permissions_permission_id', 'role_permissions', 'permissions', ['permission_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_role_permissions_role_id', 'role_permissions', 'roles', ['role_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_sessions_user_id', 'sessions', 'users', ['user_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_simulation_scenarios_created_by_id', 'simulation_scenarios', 'users', ['created_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_system_settings_updated_by_id', 'system_settings', 'users', ['updated_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_user_roles_role_id', 'user_roles', 'roles', ['role_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_user_roles_user_id', 'user_roles', 'users', ['user_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_workflow_instances_incident_id', 'workflow_instances', 'incidents', ['incident_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_workflow_instances_plan_id', 'workflow_instances', 'optimization_plans', ['plan_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_workflow_instances_simulation_run_id', 'workflow_instances', 'simulation_runs', ['simulation_run_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_workflow_instances_started_by_id', 'workflow_instances', 'users', ['started_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_incidents_assigned_operator_id', 'incidents', 'users', ['assigned_operator_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_incidents_optimization_plan_id', 'incidents', 'optimization_plans', ['optimization_plan_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_incidents_primary_asset_id', 'incidents', 'infrastructure_assets', ['primary_asset_id'], ['id'], ondelete='RESTRICT')
+    _add_foreign_key('fk_incidents_reported_by_id', 'incidents', 'users', ['reported_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_incidents_simulation_run_id', 'incidents', 'simulation_runs', ['simulation_run_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_incidents_workflow_id', 'incidents', 'workflow_instances', ['workflow_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_infrastructure_dependencies_source_asset_id', 'infrastructure_dependencies', 'infrastructure_assets', ['source_asset_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_infrastructure_dependencies_target_asset_id', 'infrastructure_dependencies', 'infrastructure_assets', ['target_asset_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_infrastructure_status_history_asset_id', 'infrastructure_status_history', 'infrastructure_assets', ['asset_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_infrastructure_status_history_changed_by_id', 'infrastructure_status_history', 'users', ['changed_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_simulation_runs_incident_id', 'simulation_runs', 'incidents', ['incident_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_simulation_runs_scenario_id', 'simulation_runs', 'simulation_scenarios', ['scenario_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_simulation_runs_triggered_by_id', 'simulation_runs', 'users', ['triggered_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_workflow_events_actor_id', 'workflow_events', 'users', ['actor_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_workflow_events_workflow_id', 'workflow_events', 'workflow_instances', ['workflow_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_incident_assets_asset_id', 'incident_assets', 'infrastructure_assets', ['asset_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_incident_assets_incident_id', 'incident_assets', 'incidents', ['incident_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_incident_events_actor_id', 'incident_events', 'users', ['actor_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_incident_events_incident_id', 'incident_events', 'incidents', ['incident_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_repair_tasks_asset_id', 'repair_tasks', 'infrastructure_assets', ['asset_id'], ['id'], ondelete='RESTRICT')
+    _add_foreign_key('fk_repair_tasks_assignee_id', 'repair_tasks', 'users', ['assignee_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_repair_tasks_created_by_id', 'repair_tasks', 'users', ['created_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_repair_tasks_incident_id', 'repair_tasks', 'incidents', ['incident_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_repair_tasks_verification_by_id', 'repair_tasks', 'users', ['verification_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_simulation_results_asset_id', 'simulation_results', 'infrastructure_assets', ['asset_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_simulation_results_cause_asset_id', 'simulation_results', 'infrastructure_assets', ['cause_asset_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_simulation_results_run_id', 'simulation_results', 'simulation_runs', ['run_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_optimization_assignments_asset_id', 'optimization_assignments', 'infrastructure_assets', ['asset_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_optimization_assignments_plan_id', 'optimization_assignments', 'optimization_plans', ['plan_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_optimization_assignments_repair_task_id', 'optimization_assignments', 'repair_tasks', ['repair_task_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_optimization_assignments_resource_id', 'optimization_assignments', 'resources', ['resource_id'], ['id'], ondelete='CASCADE')
+    _add_foreign_key('fk_resource_reservations_plan_id', 'resource_reservations', 'optimization_plans', ['plan_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_resource_reservations_repair_task_id', 'resource_reservations', 'repair_tasks', ['repair_task_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_resource_reservations_reserved_by_id', 'resource_reservations', 'users', ['reserved_by_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_resource_reservations_resource_id', 'resource_reservations', 'resources', ['resource_id'], ['id'], ondelete='RESTRICT')
+    _add_foreign_key('fk_resource_reservations_workflow_id', 'resource_reservations', 'workflow_instances', ['workflow_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_task_status_history_actor_id', 'task_status_history', 'users', ['actor_id'], ['id'], ondelete='SET NULL')
+    _add_foreign_key('fk_task_status_history_task_id', 'task_status_history', 'repair_tasks', ['task_id'], ['id'], ondelete='CASCADE')
+
+    # ### end Alembic commands ###
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
+    # ### commands auto generated by Alembic - please adjust! ###
+    _drop_foreign_key('fk_task_status_history_task_id', 'task_status_history')
+    _drop_foreign_key('fk_task_status_history_actor_id', 'task_status_history')
+    _drop_foreign_key('fk_resource_reservations_workflow_id', 'resource_reservations')
+    _drop_foreign_key('fk_resource_reservations_resource_id', 'resource_reservations')
+    _drop_foreign_key('fk_resource_reservations_reserved_by_id', 'resource_reservations')
+    _drop_foreign_key('fk_resource_reservations_repair_task_id', 'resource_reservations')
+    _drop_foreign_key('fk_resource_reservations_plan_id', 'resource_reservations')
+    _drop_foreign_key('fk_optimization_assignments_resource_id', 'optimization_assignments')
+    _drop_foreign_key('fk_optimization_assignments_repair_task_id', 'optimization_assignments')
+    _drop_foreign_key('fk_optimization_assignments_plan_id', 'optimization_assignments')
+    _drop_foreign_key('fk_optimization_assignments_asset_id', 'optimization_assignments')
+    _drop_foreign_key('fk_simulation_results_run_id', 'simulation_results')
+    _drop_foreign_key('fk_simulation_results_cause_asset_id', 'simulation_results')
+    _drop_foreign_key('fk_simulation_results_asset_id', 'simulation_results')
+    _drop_foreign_key('fk_repair_tasks_verification_by_id', 'repair_tasks')
+    _drop_foreign_key('fk_repair_tasks_incident_id', 'repair_tasks')
+    _drop_foreign_key('fk_repair_tasks_created_by_id', 'repair_tasks')
+    _drop_foreign_key('fk_repair_tasks_assignee_id', 'repair_tasks')
+    _drop_foreign_key('fk_repair_tasks_asset_id', 'repair_tasks')
+    _drop_foreign_key('fk_incident_events_incident_id', 'incident_events')
+    _drop_foreign_key('fk_incident_events_actor_id', 'incident_events')
+    _drop_foreign_key('fk_incident_assets_incident_id', 'incident_assets')
+    _drop_foreign_key('fk_incident_assets_asset_id', 'incident_assets')
+    _drop_foreign_key('fk_workflow_events_workflow_id', 'workflow_events')
+    _drop_foreign_key('fk_workflow_events_actor_id', 'workflow_events')
+    _drop_foreign_key('fk_simulation_runs_triggered_by_id', 'simulation_runs')
+    _drop_foreign_key('fk_simulation_runs_scenario_id', 'simulation_runs')
+    _drop_foreign_key('fk_simulation_runs_incident_id', 'simulation_runs')
+    _drop_foreign_key('fk_infrastructure_status_history_changed_by_id', 'infrastructure_status_history')
+    _drop_foreign_key('fk_infrastructure_status_history_asset_id', 'infrastructure_status_history')
+    _drop_foreign_key('fk_infrastructure_dependencies_target_asset_id', 'infrastructure_dependencies')
+    _drop_foreign_key('fk_infrastructure_dependencies_source_asset_id', 'infrastructure_dependencies')
+    _drop_foreign_key('fk_incidents_workflow_id', 'incidents')
+    _drop_foreign_key('fk_incidents_simulation_run_id', 'incidents')
+    _drop_foreign_key('fk_incidents_reported_by_id', 'incidents')
+    _drop_foreign_key('fk_incidents_primary_asset_id', 'incidents')
+    _drop_foreign_key('fk_incidents_optimization_plan_id', 'incidents')
+    _drop_foreign_key('fk_incidents_assigned_operator_id', 'incidents')
+    _drop_foreign_key('fk_workflow_instances_started_by_id', 'workflow_instances')
+    _drop_foreign_key('fk_workflow_instances_simulation_run_id', 'workflow_instances')
+    _drop_foreign_key('fk_workflow_instances_plan_id', 'workflow_instances')
+    _drop_foreign_key('fk_workflow_instances_incident_id', 'workflow_instances')
+    _drop_foreign_key('fk_user_roles_user_id', 'user_roles')
+    _drop_foreign_key('fk_user_roles_role_id', 'user_roles')
+    _drop_foreign_key('fk_system_settings_updated_by_id', 'system_settings')
+    _drop_foreign_key('fk_simulation_scenarios_created_by_id', 'simulation_scenarios')
+    _drop_foreign_key('fk_sessions_user_id', 'sessions')
+    _drop_foreign_key('fk_role_permissions_role_id', 'role_permissions')
+    _drop_foreign_key('fk_role_permissions_permission_id', 'role_permissions')
+    _drop_foreign_key('fk_resources_home_zone_id', 'resources')
+    _drop_foreign_key('fk_password_reset_tokens_user_id', 'password_reset_tokens')
+    _drop_foreign_key('fk_optimization_requests_simulation_run_id', 'optimization_requests')
+    _drop_foreign_key('fk_optimization_requests_requested_by_id', 'optimization_requests')
+    _drop_foreign_key('fk_optimization_requests_incident_id', 'optimization_requests')
+    _drop_foreign_key('fk_optimization_plans_request_id', 'optimization_plans')
+    _drop_foreign_key('fk_optimization_plans_approved_by_id', 'optimization_plans')
+    _drop_foreign_key('fk_notifications_user_id', 'notifications')
+    _drop_foreign_key('fk_infrastructure_assets_zone_id', 'infrastructure_assets')
+    _drop_foreign_key('fk_idempotency_keys_user_id', 'idempotency_keys')
+    _drop_foreign_key('fk_audit_logs_actor_id', 'audit_logs')
     op.drop_index(op.f('ix_task_status_history_task_id'), table_name='task_status_history')
     op.drop_table('task_status_history')
     op.drop_index('ix_reservation_task', table_name='resource_reservations')
@@ -547,14 +281,21 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_repair_tasks_incident_id'), table_name='repair_tasks')
     op.drop_index(op.f('ix_repair_tasks_assignee_id'), table_name='repair_tasks')
     op.drop_table('repair_tasks')
+    op.drop_index('ix_incident_event_incident', table_name='incident_events')
+    op.drop_table('incident_events')
+    op.drop_table('incident_assets')
+    op.drop_index('ix_workflow_event_wf', table_name='workflow_events')
+    op.drop_table('workflow_events')
+    op.drop_table('simulation_runs')
     op.drop_index('ix_status_history_asset_time', table_name='infrastructure_status_history')
     op.drop_table('infrastructure_status_history')
     op.drop_index('ix_dependency_target', table_name='infrastructure_dependencies')
     op.drop_index('ix_dependency_source', table_name='infrastructure_dependencies')
     op.drop_table('infrastructure_dependencies')
-    op.drop_table('incident_assets')
-    op.drop_index('ix_workflow_event_wf', table_name='workflow_events')
-    op.drop_table('workflow_events')
+    op.drop_index('ix_incident_status_severity', table_name='incidents')
+    op.drop_index('ix_incident_primary_asset', table_name='incidents')
+    op.drop_table('incidents')
+    op.drop_table('workflow_instances')
     op.drop_table('user_roles')
     op.drop_table('system_settings')
     op.drop_table('simulation_scenarios')
@@ -567,29 +308,23 @@ def downgrade() -> None:
     op.drop_table('resources')
     op.drop_index('ix_password_reset_user', table_name='password_reset_tokens')
     op.drop_table('password_reset_tokens')
+    op.drop_table('optimization_requests')
+    op.drop_index('ix_plan_status', table_name='optimization_plans')
+    op.drop_table('optimization_plans')
     op.drop_index('ix_notification_user_read', table_name='notifications')
     op.drop_table('notifications')
     op.drop_index(op.f('ix_infrastructure_assets_zone_id'), table_name='infrastructure_assets')
     op.drop_index(op.f('ix_infrastructure_assets_category'), table_name='infrastructure_assets')
     op.drop_index('ix_asset_category_status', table_name='infrastructure_assets')
     op.drop_table('infrastructure_assets')
-    op.drop_index('ix_incident_event_incident', table_name='incident_events')
-    op.drop_table('incident_events')
     op.drop_table('idempotency_keys')
     op.drop_index('ix_audit_actor_time', table_name='audit_logs')
     op.drop_index('ix_audit_action_time', table_name='audit_logs')
     op.drop_table('audit_logs')
-    op.drop_table('workflow_instances')
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
-    op.drop_table('simulation_runs')
     op.drop_table('roles')
     op.drop_table('permissions')
-    op.drop_table('optimization_requests')
-    op.drop_index('ix_plan_status', table_name='optimization_plans')
-    op.drop_table('optimization_plans')
-    op.drop_index('ix_incident_status_severity', table_name='incidents')
-    op.drop_index('ix_incident_primary_asset', table_name='incidents')
-    op.drop_table('incidents')
     op.drop_table('city_zones')
+
     # ### end Alembic commands ###

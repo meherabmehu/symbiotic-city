@@ -1,0 +1,31 @@
+#  Build context hygiene.
+#
+#  Without this file `docker build .` sends the entire repository — including a
+#  local virtualenv, node_modules and the dev SQLite database — to the daemon,
+#  and any edit invalidates the layer cache.
+.git
+.gitignore
+.github
+
+# python
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+backend/data
+
+# node / next
+node_modules
+frontend/.next
+frontend/out
+frontend/npm-debug.log*
+
+# docs and local notes are not needed to build either image
+docs
+*.md
+
+# secrets and local overrides
+.env
+.env.*
+!.env.example
