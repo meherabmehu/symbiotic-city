@@ -63,10 +63,18 @@ test.describe("operator journey", () => {
     await expectShell(page);
 
     // The solver refuses an empty demand set, so add one asset that needs power.
+    await expect(page.getByText(/0 assets ·/)).toBeVisible();
     await page.getByRole("button", { name: /add demand/i }).click();
+
     const demandDialog = page.getByRole("dialog", { name: /add a demand/i });
+    await expect(demandDialog).toBeVisible();
     // Target an asset by its code: the dialog's first button is "Close dialog".
     await demandDialog.getByRole("button", { name: /[A-Z]{2,3}-\d+/ }).first().click();
+
+    // The demand must actually land in the list before solving, otherwise the
+    // planner is asked to solve nothing and correctly refuses.
+    await expect(page.getByText(/1 assets ·/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: /solve/i }).first()).toBeEnabled();
 
     // Watch the actual request rather than only the screen: if the solve is
     // rejected, the test should report the API's status and body, not an
