@@ -49,7 +49,7 @@ test.describe("operator journey", () => {
 
     // Nothing is selected by default, and run() correctly refuses to simulate an
     // empty failure set, so pick the first asset as the initial failure.
-    const failureList = page.getByRole("list", { name: /initial failure assets/i });
+    const failureList = page.getByRole("group", { name: /initial failure assets/i });
     await failureList.getByRole("checkbox").first().check();
     await expect(failureList.getByRole("checkbox").first()).toBeChecked();
 
@@ -65,7 +65,8 @@ test.describe("operator journey", () => {
     // The solver refuses an empty demand set, so add one asset that needs power.
     await page.getByRole("button", { name: /add demand/i }).click();
     const demandDialog = page.getByRole("dialog", { name: /add a demand/i });
-    await demandDialog.getByRole("button").first().click();
+    // Target an asset by its code: the dialog's first button is "Close dialog".
+    await demandDialog.getByRole("button", { name: /[A-Z]{2,3}-\d+/ }).first().click();
 
     await page.getByRole("button", { name: /solve/i }).first().click();
     // A successful solve navigates to the persisted plan, whose header carries its code.
