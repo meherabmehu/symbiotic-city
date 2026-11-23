@@ -7,7 +7,7 @@ test.describe("landing page", () => {
     await page.goto("/");
 
     await expect(page.getByRole("heading", { level: 1 })).toContainText(/SYMBIOTIC CITY/i);
-    await expect(page.getByText(/LIVE DIGITAL TWIN/i)).toBeVisible();
+    await expect(page.getByText(/LIVE DIGITAL TWIN/i).first()).toBeVisible();
     await expect(
       page.getByText("A unified command layer for the resilient, responsive city.")
     ).toBeVisible();
@@ -16,7 +16,7 @@ test.describe("landing page", () => {
     await expect(page.getByRole("contentinfo")).toContainText(/SYMBIOTIC CITY/);
   });
 
-  test("is reachable without a session and renders without console errors", async ({ page }) => {
+  test("renders without console errors", async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -40,18 +40,34 @@ test.describe("authentication", () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test("every demo role can sign in and land on the dashboard", async ({ page }) => {
-    for (const role of Object.keys(DEMO) as (keyof typeof DEMO)[]) {
-      await login(page, role);
-      await expectShell(page);
-      await page.context().clearCookies();
-    }
+  test("the operator signs in and reaches the dashboard", async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await login(page, "operator");
+    await expectShell(page);
+    await expect(page.locator("main#main")).toContainText(/incident/i);
+    expect(errors).toEqual([]);
+  });
+
+  test("the analyst signs in and reaches the dashboard", async ({ page }) => {
+    await login(page, "analyst");
+    await expectShell(page);
+  });
+
+  test("the engineer signs in and reaches the dashboard", async ({ page }) => {
+    await login(page, "engineer");
+    await expectShell(page);
+  });
+
+  test("the super admin signs in and reaches the dashboard", async ({ page }) => {
+    await login(page, "admin");
+    await expectShell(page);
   });
 
   test("signing out ends the session", async ({ page }) => {
-    await login(page);
+    await login(page, "operator");
     // Sign out lives in the account menu in the header.
-    await page.getByRole("button", { name: /@symbiotic\.city/i }).last().click();
+    const menu = page.locator('button[aria-haspopup="menu"]').last();
+    await menu.click();
     await page.getByRole("menuitem", { name: /sign out/i }).click();
     await expect(page).toHaveURL(/\/login/);
 
