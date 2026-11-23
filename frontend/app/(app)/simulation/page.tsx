@@ -230,7 +230,7 @@ function SimulationLab() {
         ]}
       />
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[420px_1fr]">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
         <div className="space-y-4">
           {tab === "setup" ? (
             <>

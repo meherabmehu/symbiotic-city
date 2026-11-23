@@ -18,10 +18,30 @@ test.describe("responsive layout", () => {
 
       const overflow = await page.evaluate(() => {
         const { scrollWidth, clientWidth } = document.documentElement;
-        return { scrollWidth, clientWidth };
+        const limit = clientWidth + 1;
+        // Name the widest element so a failure reports the cause, not just a number.
+        let widest = { selector: "", right: 0 };
+        for (const element of Array.from(document.querySelectorAll("body *"))) {
+          const box = element.getBoundingClientRect();
+          if (box.width === 0 || box.right <= limit) continue;
+          if (box.right > widest.right) {
+            const classes =
+              typeof element.className === "string" && element.className
+                ? `.${element.className.trim().split(/\s+/).slice(0, 4).join(".")}`
+                : "";
+            widest = {
+              selector: `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ""}${classes}`,
+              right: Math.round(box.right),
+            };
+          }
+        }
+        return { scrollWidth, clientWidth, widest };
       });
       // Allow a 1px rounding difference; anything more is a real overflow.
-      expect(overflow.scrollWidth - overflow.clientWidth).toBeLessThanOrEqual(1);
+      expect(
+        overflow.scrollWidth - overflow.clientWidth,
+        `widest overflowing element: ${overflow.widest.selector} (right edge ${overflow.widest.right}px)`,
+      ).toBeLessThanOrEqual(1);
     });
   }
 
