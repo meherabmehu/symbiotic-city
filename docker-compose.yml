@@ -28,7 +28,9 @@ services:
       dockerfile: Dockerfile.backend
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-symbiotic}:${POSTGRES_PASSWORD:-symbiotic}@db:5432/${POSTGRES_DB:-symbiotic_city}
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-please-use-a-long-random-string}
+      # No default on purpose. Compose refuses to start without it, which is
+      # much better than quietly running production with a guessable key.
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY to a long random string}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-1}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
@@ -38,6 +40,14 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    # Required by the web service's `condition: service_healthy` below. Without a
+    # healthcheck, compose refuses to start the dependent service at all.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   web:
@@ -56,6 +66,12 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
