@@ -76,6 +76,18 @@ SYMBIOTIC CITY answers three questions before the incident, and one after it:
 
 Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/API.md](docs/API.md) · [docs/MODELS.md](docs/MODELS.md).
 
+## For judges
+
+| Document | What it answers |
+| --- | --- |
+| [docs/COMPETITION_MATRIX.md](docs/COMPETITION_MATRIX.md) | Every M01–M08 and A02/A07 claim mapped to the evidence that proves it |
+| [docs/FINAL_PRODUCTION_AUDIT.md](docs/FINAL_PRODUCTION_AUDIT.md) | What was verified, what was not, and the eight defects found |
+| [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | The 8–10 minute recording script and checklist |
+| [docs/SUBMISSION.md](docs/SUBMISSION.md) | S01/S02/S03 status, stated without inflation |
+
+Each claim is marked **Verified**, **Partially verified**, **Not verified**,
+**Blocked** or **Failed**. No incomplete test is reported as a pass.
+
 ## Quick start
 
 ```bash
@@ -91,7 +103,8 @@ cd frontend && npm install && cd ..
 ```
 
 Open <http://127.0.0.1:3000>, sign in with a demo role, and follow
-[docs/DEMO.md](docs/DEMO.md) for a 10-minute scripted tour.
+[docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for the recording script
+(a shorter walkthrough is in [docs/DEMO.md](docs/DEMO.md)).
 
 Demo accounts (synthetic, seeded on first boot):
 
@@ -106,12 +119,13 @@ Demo accounts (synthetic, seeded on first boot):
 ## Verify it
 
 ```bash
-./scripts/verify.sh          # alembic up/down, 105 backend tests, tsc, next build
+./scripts/verify.sh          # alembic up/down, 112 backend tests (SQLite), tsc, build
 ./scripts/verify.sh backend  # just the API surface
 python3 scripts/smoke.py     # live end-to-end flow against a running stack
 
 # Schema work must also be checked on PostgreSQL: SQLite does not validate
 # foreign keys while parsing DDL, so a broken revision looks green there.
+# Pointed at a real PostgreSQL 16 server the same suite reports 122 passed, 0 skipped.
 POSTGRES_TEST_URL=postgresql+psycopg2://postgres@/symbiotic_test ./scripts/verify.sh postgres
 
 cd frontend && npm run e2e   # browser tests (starts the API and the app itself)
@@ -135,10 +149,10 @@ backend/
     models/          30 tables across identity, infrastructure, operations,
                      simulation, optimization, workflow, system
   migrations/        Alembic revisions (env.py renders custom UTCDateTime)
-  tests/             105 tests: engines, API contract, RBAC, workflow e2e,
+  tests/             122 tests: engines, API contract, RBAC, workflow e2e,
                      migrations, PostgreSQL parity
 frontend/
-  app/               24 routes: landing, auth, shell, and every operational screen
+  app/               27 routes: landing, auth, shell, and every operational screen
   components/        ui primitives, city twin canvas, charts, layout
   lib/               typed API client, session context, formatters
 docs/                architecture, API reference, model maths, setup, demo script,
@@ -172,6 +186,23 @@ each module docstring.
 `docker compose up --build` brings up Postgres, the API (migrated + seeded) and the
 console; see [docs/SETUP.md](docs/SETUP.md). The console proxies `/api` to the API
 service, so no client-side CORS configuration is needed.
+
+`SECRET_KEY` is required — the stack refuses to start without it rather than
+running production on a guessable default:
+
+```bash
+export SECRET_KEY="$(openssl rand -hex 32)"
+docker compose up --build
+```
+
+For a public deployment, set `NEXT_PUBLIC_DEMO_LOGIN=0` so the one-click demo
+accounts are not advertised on the sign-in page.
+
+**No public deployment exists for this entry.** The compose stack, both Dockerfiles
+and the proxy are prepared and were reviewed statically, but no image was built and
+no URL was tested in the audit environment. See
+[docs/SUBMISSION.md](docs/SUBMISSION.md) §S03 for the exact blocker and the
+commands that finish it.
 
 ## Licence
 
