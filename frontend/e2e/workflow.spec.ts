@@ -74,7 +74,10 @@ test.describe("operator journey", () => {
     // The demand must actually land in the list before solving, otherwise the
     // planner is asked to solve nothing and correctly refuses.
     await expect(page.getByText(/1 assets ·/)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: /solve/i }).first()).toBeEnabled();
+    // "Preview solve" also matches /solve/ and comes first in the DOM, so name the
+    // persist button exactly; otherwise the click lands on Preview.
+    const solveButton = page.getByRole("button", { name: /solve & persist/i });
+    await expect(solveButton).toBeEnabled();
 
     // Watch the actual request rather than only the screen: if the solve is
     // rejected, the test should report the API's status and body, not an
@@ -85,7 +88,7 @@ test.describe("operator journey", () => {
         response.request().method() === "POST",
       { timeout: 25_000 },
     );
-    await page.getByRole("button", { name: /solve/i }).first().click();
+    await solveButton.click();
 
     const response = await solveResponse;
     if (!response.ok()) {

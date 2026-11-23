@@ -94,7 +94,7 @@ test.describe("city analyst", () => {
     await page.goto("/optimization");
     await expect(page.getByRole("main")).toBeVisible();
 
-    await page.getByRole("button", { name: /solve/i }).first().click();
+    await page.getByRole("button", { name: /solve & persist/i }).click();
     await expect(page.getByText(/add at least one demand/i)).toBeVisible({ timeout: 10_000 });
   });
 
