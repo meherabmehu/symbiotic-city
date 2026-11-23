@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, LogIn } from "lucide-react";
 import { AuthShell } from "@/components/layout/auth-shell";
 import { Alert, Button, Field, Input } from "@/components/ui";
@@ -38,9 +38,15 @@ function LoginForm() {
     }
   }
 
-  if (!loading && user) {
-    router.replace("/dashboard");
-  }
+  // Already signed in (a refresh, or a second tab): leave the form. This has to
+  // happen in an effect. Calling router.replace() during render makes React log
+  // "Cannot update a component (Router) while rendering a different component",
+  // and React's own advice is to move the state update into an effect.
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/dashboard");
+    }
+  }, [loading, user, router]);
 
   return (
     <form

@@ -24,7 +24,8 @@ test.describe("operator journey", () => {
     await page.getByRole("button", { name: /report incident|new incident/i }).first().click();
     await page.getByLabel(/^title/i).fill(title);
     await page.getByLabel(/description/i).fill("Reported by the end-to-end suite.");
-    await page.getByLabel(/severity/i).selectOption("high");
+    // The page also has a "Filter by severity" select, so target the form field.
+    await page.locator("#inc-severity").selectOption("high");
     await page.getByRole("button", { name: /^(submit|report|create)/i }).last().click();
 
     await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 });
@@ -46,6 +47,12 @@ test.describe("operator journey", () => {
     await page.goto("/simulation");
     await expectShell(page);
 
+    // Nothing is selected by default, and run() correctly refuses to simulate an
+    // empty failure set, so pick the first asset as the initial failure.
+    const failureList = page.getByRole("list", { name: /initial failure assets/i });
+    await failureList.getByRole("checkbox").first().check();
+    await expect(failureList.getByRole("checkbox").first()).toBeChecked();
+
     await page.getByRole("button", { name: /run simulation|simulate/i }).first().click();
     await expect(page.getByText(/assets failed/i).first()).toBeVisible({ timeout: 25_000 });
   });
@@ -54,6 +61,11 @@ test.describe("operator journey", () => {
     await login(page, "analyst");
     await page.goto("/optimization");
     await expectShell(page);
+
+    // The solver refuses an empty demand set, so add one asset that needs power.
+    await page.getByRole("button", { name: /add demand/i }).click();
+    const demandDialog = page.getByRole("dialog", { name: /add a demand/i });
+    await demandDialog.getByRole("button").first().click();
 
     await page.getByRole("button", { name: /solve/i }).first().click();
     // A successful solve navigates to the persisted plan, whose header carries its code.
