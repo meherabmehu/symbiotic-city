@@ -68,30 +68,25 @@ test.describe("operator journey", () => {
     // Target an asset by its code: the dialog's first button is "Close dialog".
     await demandDialog.getByRole("button", { name: /[A-Z]{2,3}-\d+/ }).first().click();
 
+    // Watch the actual request rather than only the screen: if the solve is
+    // rejected, the test should report the API's status and body, not an
+    // anonymous navigation timeout.
+    const solveResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/optimization/requests") &&
+        response.request().method() === "POST",
+      { timeout: 25_000 },
+    );
     await page.getByRole("button", { name: /solve/i }).first().click();
 
-    // Race the navigation against the screen's own error banner. Without this the
-    // failure is an anonymous timeout; with it, a rejected solve reports the API's
-    // reason instead of saying nothing for 25 seconds.
-    const navigated = page
-      .waitForURL(/\/optimization\/plans\//, { timeout: 25_000 })
-      .then(() => true)
-      .catch(() => false);
-    const rejected = page
-      .getByRole("alert")
-      .filter({ hasText: /.+/ })
-      .first()
-      .waitFor({ state: "visible", timeout: 25_000 })
-      .then(() => false)
-      .catch(() => true);
-
-    const solved = await Promise.race([navigated, rejected]);
-    if (!solved) {
-      const banner = await page.getByRole("alert").first().innerText();
-      throw new Error(`The planner rejected the plan: ${banner.trim()}`);
+    const response = await solveResponse;
+    if (!response.ok()) {
+      const detail = (await response.text()).slice(0, 600);
+      throw new Error(`The planner rejected the plan (${response.status()}): ${detail}`);
     }
 
     // A successful solve navigates to the persisted plan, whose header carries its code.
+    await page.waitForURL(/\/optimization\/plans\//, { timeout: 25_000 });
     await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 15_000 });
   });
 
