@@ -27,7 +27,7 @@ test.describe("operator journey", () => {
     await page.getByLabel(/severity/i).selectOption("high");
     await page.getByRole("button", { name: /^(submit|report|create)/i }).last().click();
 
-    await expect(page.getByText(title)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 });
   });
 
   test("the digital twin renders and is keyboard navigable", async ({ page }) => {

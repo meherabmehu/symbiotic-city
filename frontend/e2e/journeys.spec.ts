@@ -85,7 +85,7 @@ test.describe("city analyst", () => {
     await page.getByRole("button", { name: /run simulation|simulate/i }).first().click();
     await expect(
       page.getByText(/assets? (failed|impacted)/i).first()
-    ).toBeVisible({ timeout: 45_000 });
+    ).toBeVisible({ timeout: 25_000 });
   });
 
   test("generates an optimisation plan", async ({ page }) => {
@@ -93,7 +93,7 @@ test.describe("city analyst", () => {
     await page.goto("/optimization");
     await expect(page.getByRole("main")).toBeVisible();
     await page.getByRole("button", { name: /generate|solve|optimis/i }).first().click();
-    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 25_000 });
   });
 
   test("opens analytics and exports", async ({ page }) => {
