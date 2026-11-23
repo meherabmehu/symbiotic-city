@@ -28,10 +28,12 @@ RUN apt-get update \
 
 COPY --from=build /opt/venv /opt/venv
 WORKDIR /app
+# The build context is the repository root (see docker-compose.yml), so these
+# paths resolve from there. backend/ already contains alembic.ini and
+# migrations/, which the previous explicit COPYs looked for in the wrong place
+# and which made the build fail at the alembic.ini step.
 COPY backend/ ./
 COPY scripts/ ./scripts/
-COPY alembic.ini ./
-COPY migrations ./migrations
 
 RUN mkdir -p /app/data && chown -R appuser:appuser /app
 USER appuser

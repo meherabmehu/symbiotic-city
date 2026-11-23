@@ -106,10 +106,19 @@ Demo accounts (synthetic, seeded on first boot):
 ## Verify it
 
 ```bash
-./scripts/verify.sh          # alembic up/down, 95 backend tests, tsc, next build
+./scripts/verify.sh          # alembic up/down, 105 backend tests, tsc, next build
 ./scripts/verify.sh backend  # just the API surface
 python3 scripts/smoke.py     # live end-to-end flow against a running stack
+
+# Schema work must also be checked on PostgreSQL: SQLite does not validate
+# foreign keys while parsing DDL, so a broken revision looks green there.
+POSTGRES_TEST_URL=postgresql+psycopg2://postgres@/symbiotic_test ./scripts/verify.sh postgres
+
+cd frontend && npm run e2e   # browser tests (starts the API and the app itself)
 ```
+
+CI runs all of the above on every push: SQLite suite, a PostgreSQL 16 service job
+that runs `alembic upgrade head` first, the frontend build, and Playwright.
 
 ## Repository layout
 
@@ -126,12 +135,14 @@ backend/
     models/          30 tables across identity, infrastructure, operations,
                      simulation, optimization, workflow, system
   migrations/        Alembic revisions (env.py renders custom UTCDateTime)
-  tests/             95 tests: engines, API contract, RBAC, workflow e2e
+  tests/             105 tests: engines, API contract, RBAC, workflow e2e,
+                     migrations, PostgreSQL parity
 frontend/
   app/               24 routes: landing, auth, shell, and every operational screen
   components/        ui primitives, city twin canvas, charts, layout
   lib/               typed API client, session context, formatters
-docs/                architecture, API reference, model maths, setup, demo script
+docs/                architecture, API reference, model maths, setup, demo script,
+                     and AUDIT.md (independently verified findings)
 scripts/             dev.sh, seed.sh, verify.sh, smoke.py
 ```
 

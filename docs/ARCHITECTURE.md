@@ -154,7 +154,7 @@ See [MODELS.md](MODELS.md) for the maths and the state machines, and
 
 Docker Compose (Postgres + API + console), non-root containers, healthchecks,
 Alembic migrations, `SEED_DEMO_DATA` to control seeding. `scripts/verify.sh`
-round-trips migrations up and down, runs the 95 backend tests, typechecks and
+round-trips migrations up and down, runs the 105 backend tests, typechecks and
 builds the frontend.
 
 Scheduler: **none**. Cascade propagation, optimisation and workflow steps are

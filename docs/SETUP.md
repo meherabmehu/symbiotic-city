@@ -81,6 +81,21 @@ cd backend
 custom `UTCDateTime` column type as `sa.DateTime(timezone=True)`, so generated
 revisions import cleanly without the application package.
 
+**After regenerating any revision that creates tables, run:**
+
+```bash
+python3 scripts/sort_migration.py backend/migrations/versions/<revision>.py
+```
+
+`alembic revision --autogenerate` emits `create_table` calls alphabetically with
+the foreign keys inlined. SQLite accepts that; PostgreSQL does not, because it
+resolves the referenced table when the constraint is created. This schema also
+has real cycles (`incidents` ⇄ `optimization_plans` ⇄ `optimization_requests`,
+`incidents` ⇄ `simulation_runs`), so ordering alone cannot fix it. The script
+keeps every column and constraint definition, moves the foreign keys into
+`create_foreign_key` calls after all tables exist, and mirrors the order in
+`downgrade()`. `--check` reports whether a revision still needs it.
+
 To target a scratch database:
 
 ```bash
@@ -113,13 +128,38 @@ public https origin. The API trusts `X-Forwarded-*` (`--proxy-headers`).
 ## 4. Verification
 
 ```bash
-./scripts/verify.sh            # alembic round-trip, 95 tests, tsc, next build
+./scripts/verify.sh            # alembic round-trip, 105 tests, tsc, next build
 ./scripts/verify.sh backend
 ./scripts/verify.sh frontend
 python3 scripts/smoke.py       # live flow against a running stack
 ```
 
 `verify.sh` uses `/tmp/symbiotic_verify.db`, so it never touches your dev data.
+
+### PostgreSQL
+
+The default suite runs on SQLite, which does not validate foreign keys while
+parsing DDL. Anything schema-related must therefore also be checked against
+PostgreSQL, or a revision that only works on SQLite will look green:
+
+```bash
+createdb symbiotic_test
+POSTGRES_TEST_URL=postgresql+psycopg2://postgres@/symbiotic_test ./scripts/verify.sh postgres
+```
+
+That runs `alembic upgrade head`, `downgrade base`, `upgrade head` and then the
+migration and parity suites (16 tests) against the real server. The same steps
+run in CI on every push.
+
+### Browser tests
+
+```bash
+cd frontend
+npx playwright install chromium   # once
+npm run e2e                       # starts the API and the app itself
+```
+
+Requires a seeded database (`SEED_DEMO_DATA=1`) and the demo accounts.
 
 ## 5. Troubleshooting
 
