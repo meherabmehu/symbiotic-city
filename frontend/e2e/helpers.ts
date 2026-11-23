@@ -21,11 +21,21 @@ export async function login(page: Page, role: DemoRole = "operator", next?: stri
   return page;
 }
 
+/**
+ * Console noise that is expected rather than a defect:
+ *  - a 401 from /api/auth/me is how the shell learns nobody is signed in yet;
+ *  - a 401 from /api/auth/login is how the form learns the password is wrong.
+ * The browser logs both as "Failed to load resource", which is not a fault.
+ */
+const EXPECTED_CONSOLE = /401|Unauthorized|Failed to load resource/i;
+
 /** Collect console errors and unhandled rejections so a test can assert none occurred. */
 export function trackConsoleErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() === "error" && !EXPECTED_CONSOLE.test(message.text())) {
+      errors.push(message.text());
+    }
   });
   page.on("pageerror", (error) => errors.push(error.message));
   return errors;

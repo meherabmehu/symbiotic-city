@@ -22,7 +22,7 @@ test.describe("operator journey", () => {
 
     const title = `E2E reported incident ${Date.now()}`;
     await page.getByRole("button", { name: /report incident|new incident/i }).first().click();
-    await page.getByLabel(/^title$/i).fill(title);
+    await page.getByLabel(/^title/i).fill(title);
     await page.getByLabel(/description/i).fill("Reported by the end-to-end suite.");
     await page.getByLabel(/severity/i).selectOption("high");
     await page.getByRole("button", { name: /^(submit|report|create)/i }).last().click();
@@ -47,7 +47,7 @@ test.describe("operator journey", () => {
     await expectShell(page);
 
     await page.getByRole("button", { name: /run simulation|simulate/i }).first().click();
-    await expect(page.getByText(/assets? (failed|impacted)/i).first()).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByText(/assets failed/i).first()).toBeVisible({ timeout: 25_000 });
   });
 
   test("analyst can generate an optimisation plan", async ({ page }) => {
@@ -55,8 +55,10 @@ test.describe("operator journey", () => {
     await page.goto("/optimization");
     await expectShell(page);
 
-    await page.getByRole("button", { name: /generate|solve|optimis/i }).first().click();
-    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 40_000 });
+    await page.getByRole("button", { name: /solve/i }).first().click();
+    // A successful solve navigates to the persisted plan, whose header carries its code.
+    await page.waitForURL(/\/optimization\/plans\//, { timeout: 25_000 });
+    await expect(page.getByText(/PLAN-\d+/).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("engineer sees an assigned task queue", async ({ page }) => {
@@ -68,17 +70,26 @@ test.describe("operator journey", () => {
 });
 
 test.describe("role separation", () => {
-  test("an engineer cannot reach the admin area", async ({ page }) => {
+  test("an engineer is refused the user management screen", async ({ page }) => {
     await login(page, "engineer");
-    await page.goto("/admin");
-    await expect(page.locator("main#main")).toContainText(/permission|not authorised|denied|restricted/i);
+    await page.goto("/admin/users");
+    await expect(page.locator("main#main")).toContainText(
+      /administrator access required|permission|not authorised|denied|restricted/i
+    );
   });
 
-  test("an operator can reach the admin area only if granted, and sees a clear message", async ({
-    page,
-  }) => {
+  test("an operator is refused the user management screen", async ({ page }) => {
     await login(page, "operator");
-    await page.goto("/admin");
-    await expect(page.locator("main#main")).toBeVisible();
+    await page.goto("/admin/users");
+    await expect(page.locator("main#main")).toContainText(
+      /administrator access required|permission|not authorised|denied|restricted/i
+    );
+  });
+
+  test("an engineer has no admin entries in the navigation", async ({ page }) => {
+    await login(page, "engineer");
+    await expectShell(page);
+    const nav = page.getByRole("navigation").first();
+    await expect(nav).not.toContainText(/user & role management|system audit logs/i);
   });
 });

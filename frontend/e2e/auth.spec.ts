@@ -24,12 +24,8 @@ test.describe("landing page", () => {
     const errors = trackConsoleErrors(page);
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    // The shell asks /api/auth/me who is signed in; a 401 for an anonymous
-    // visitor is the intended answer, not a fault. Browsers log it regardless.
-    const unexpected = errors.filter(
-      (message) => !/401|Unauthorized|Failed to load resource/i.test(message)
-    );
-    expect(unexpected).toEqual([]);
+    // trackConsoleErrors already ignores the expected anonymous 401.
+    expect(errors).toEqual([]);
   });
 });
 
