@@ -95,7 +95,10 @@ export function CityTwin({
   const [internalSelected, setInternalSelected] = useState<number | null>(null);
   const dragState = useRef<{ x: number; y: number; camX: number; camY: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [size, setSize] = useState({ width: 900, height });
+  // Start at zero and let the ResizeObserver supply the real width. A hardcoded
+  // default width is written to the canvas as an inline pixel size, which pushes
+  // the whole page wider than a narrow viewport until the observer fires.
+  const [size, setSize] = useState({ width: 0, height });
 
   const selected = selectedId ?? internalSelected;
   const impactByAsset = useMemo(() => {
@@ -119,7 +122,8 @@ export function CityTwin({
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      setSize({ width: entry.contentRect.width, height });
+      // Round down so a fractional width can never round up past the container.
+      setSize({ width: Math.floor(entry.contentRect.width), height });
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -142,6 +146,8 @@ export function CityTwin({
     if (!canvas) return;
     const context = canvas.getContext("2d");
     if (!context) return;
+    // Not measured yet: leave the canvas alone rather than painting at a guess.
+    if (size.width <= 0) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = size.width * dpr;
@@ -398,7 +404,7 @@ export function CityTwin({
         <canvas
           ref={canvasRef}
           className={clsx(
-            "block w-full touch-none",
+            "block w-full max-w-full touch-none",
             dragging ? "cursor-grabbing" : hovered ? "cursor-pointer" : "cursor-grab",
           )}
           style={{ height }}

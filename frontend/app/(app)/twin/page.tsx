@@ -100,8 +100,10 @@ export default function TwinPage() {
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
-        <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        {/* min-w-0: a grid child defaults to min-width:auto, so the canvas would
+            otherwise be able to push the column past the viewport. */}
+        <div className="min-w-0 space-y-4">
           <Panel className="p-3 sm:p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
