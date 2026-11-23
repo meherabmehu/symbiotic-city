@@ -205,11 +205,11 @@ export default function OptimizationPage() {
     setPreviewBusy(true);
     setError(null);
     try {
-      const data = await api.raw<PreviewResult>("/optimization/preview", {
+      const data = await api.raw<{ data: PreviewResult }>("/optimization/preview", {
         method: "POST",
         body: demandPayload(),
       });
-      setPreview(data);
+      setPreview(data.data);
     } catch (err) {
       setError(errorMessage(err));
       setPreview(null);
@@ -226,12 +226,13 @@ export default function OptimizationPage() {
     setSubmitBusy(true);
     setError(null);
     try {
-      const response = await api.raw<{ plan: OptimizationPlan }>("/optimization/requests", {
+      const response = await api.raw<{ data: { plan: OptimizationPlan } }>("/optimization/requests", {
         method: "POST",
         body: demandPayload(),
       });
       setRefreshKey((k) => k + 1);
-      router.push(`/optimization/plans/${response.plan.id}`);
+      // raw() hands back the whole envelope, so the plan is at response.data.plan.
+      router.push(`/optimization/plans/${response.data.plan.id}`);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
