@@ -1,18 +1,47 @@
 import { expect, test } from "@playwright/test";
 
-import { expectShell, login } from "./helpers";
+import { type DemoRole, expectShell, login } from "./helpers";
 
 /**
  * Layout checks that only a real browser can make: no horizontal overflow and
  * navigation reachable at mobile width. Runs under the "mobile" project
  * (Pixel 7, 412x915) as well as chromium at desktop size.
  */
-const ROUTES = ["/dashboard", "/incidents", "/twin", "/simulation", "/optimization", "/my-tasks"];
+/**
+ * Every authenticated route, paired with a role that can actually load it, so a
+ * narrow viewport cannot overflow on a screen no test visits. Pages whose data
+ * the role lacks render their "requires this permission" panel instead of the
+ * table, so the permission-sensitive ones are driven as the role that owns them:
+ * resource, task and workflow reads are closed to the analyst, and the operator
+ * and analyst share every other domain.
+ */
+const ROUTES: { path: string; role: DemoRole }[] = [
+  { path: "/dashboard", role: "operator" },
+  { path: "/incidents", role: "operator" },
+  { path: "/twin", role: "operator" },
+  { path: "/simulation", role: "operator" },
+  { path: "/optimization", role: "operator" },
+  { path: "/my-tasks", role: "operator" },
+  // Added: these were never covered at a narrow viewport.
+  { path: "/tasks", role: "engineer" },
+  { path: "/workflows", role: "operator" },
+  { path: "/infrastructure", role: "operator" },
+  { path: "/resources", role: "operator" },
+  { path: "/analytics", role: "analyst" },
+  { path: "/notifications", role: "operator" },
+  { path: "/profile", role: "operator" },
+  { path: "/docs", role: "operator" },
+  // Administration screens are the widest (dense tables) and the most likely to
+  // overflow, so they are covered explicitly rather than assumed.
+  { path: "/admin/users", role: "admin" },
+  { path: "/admin/audit", role: "admin" },
+  { path: "/admin/settings", role: "admin" },
+];
 
 test.describe("responsive layout", () => {
-  for (const route of ROUTES) {
+  for (const { path: route, role } of ROUTES) {
     test(`${route} has no horizontal overflow at this viewport`, async ({ page }) => {
-      await login(page);
+      await login(page, role);
       await page.goto(route);
       await expectShell(page);
 
