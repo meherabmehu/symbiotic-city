@@ -45,3 +45,35 @@ def get_criticality(
 def get_consequence(asset_id: int, db: DbSession, user: CurrentUser):
     """What actually breaks if this one asset fails, from the cascade engine."""
     return ok(criticality_service.consequence_of(db, asset_id))
+
+
+@router.get(
+    "/resilience/heatmap",
+    dependencies=[Depends(require_permissions("resilience:read"))],
+)
+def get_heatmap(
+    db: DbSession,
+    user: CurrentUser,
+    run_ids: list[int] | None = Query(
+        None, max_length=4, description="Restrict to these simulation runs."
+    ),
+    ensure_run: bool = Query(
+        False,
+        description=(
+            "Create one persisted baseline run when the database has none, so a "
+            "fresh install shows real cascade data instead of an empty map."
+        ),
+    ),
+):
+    """Zone-by-zone resilience risk with an explanatory legend.
+
+    Every zone reports a score, a band, and the plain-language reasons behind it,
+    so the map can be read without knowing the model.
+    """
+    from app.services import heatmap as heatmap_service
+
+    data = heatmap_service.build(
+        db, run_ids=run_ids, ensure_run=ensure_run, actor_id=user.id
+    )
+    data["generated_at"] = utcnow()
+    return ok(data)
