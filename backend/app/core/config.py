@@ -6,7 +6,7 @@ All values are environment driven so that the same image can run locally
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -96,12 +96,31 @@ class Settings(BaseSettings):
 
     @property
     def sqlite_path(self) -> Path | None:
-        if self.database_url.startswith("sqlite"):
-            raw = self.database_url.split("///", 1)[-1]
-            if raw.startswith("/"):
-                return Path(raw)
-            return (REPO_DIR / raw).resolve()
-        return None
+        """Absolute path of the SQLite file, or ``None`` for a non-SQLite URL.
+
+        Three URL shapes have to survive here:
+
+        * ``sqlite:////abs/path``     -- POSIX absolute (four slashes)
+        * ``sqlite:///C:/Users/...`` -- Windows absolute (three slashes)
+        * ``sqlite:///./data/x.db``  -- relative to the repository root
+
+        A Windows path starts with a drive letter, not a slash, so testing for a
+        leading ``/`` treats ``C:/Users/...`` as relative and resolves it against
+        the repository root -- producing a path under the repository named after
+        the drive letter, which cannot be created. On Linux and macOS that check
+        fails too, because a drive letter means nothing to POSIX, so the URL is
+        tested with both platforms' rules.
+        """
+        if not self.database_url.startswith("sqlite"):
+            return None
+        raw = self.database_url.split("///", 1)[-1]
+        # Checked with the *Windows* rules as well as the host's, because
+        # ``Path("C:/Users/x").is_absolute()`` is False on Linux and macOS --
+        # a drive letter means nothing to POSIX, so the naive check silently
+        # classifies a Windows absolute path as relative.
+        if PureWindowsPath(raw).is_absolute() or Path(raw).is_absolute():
+            return Path(raw)
+        return (REPO_DIR / raw).resolve()
 
 
 @lru_cache
