@@ -388,7 +388,6 @@ def simulate_cascade(
         )
 
     frontier: deque[tuple[int, int]] = deque((asset_id, 0) for asset_id in initial)
-    visited_depth = {asset_id: 0 for asset_id in initial}
 
     while frontier:
         current, depth = frontier.popleft()
@@ -398,12 +397,16 @@ def simulate_cascade(
             if neighbour in failed:
                 continue
             neighbour_depth = depth + 1
-            if visited_depth.get(neighbour, 10**6) < neighbour_depth:
-                continue
+            # Re-evaluate this node even if it was reached earlier. A node first
+            # touched at depth 1 may have had only one failed supplier then; a
+            # deeper supplier that fails later adds to the same deficit and can
+            # push it over the threshold. Pinning the first verdict made the
+            # cascade depend on traversal order and under-reported failures.
+            # The deficit is recomputed from the current failed set, so a node
+            # already marked degraded is promoted to failed when it crosses.
             deficit, dominant, reasons = _accumulated_deficit(graph, neighbour, failed, impacts)
             if deficit <= 0:
                 continue
-            visited_depth[neighbour] = neighbour_depth
             if deficit >= threshold:
                 node = by_id[neighbour]
                 cause = dominant if dominant is not None else current
