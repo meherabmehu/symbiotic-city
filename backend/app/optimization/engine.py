@@ -365,8 +365,31 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
         covered = [
             d for d in demands if solver.Value(served[d.asset_id]) == 1
         ]
+        # The mobilisation budget is shared by every dispatch, so compute what is
+        # actually left of it: that is what tells a horizon-bound plan from a
+        # capacity-bound one. Without this the explanation asserted a capacity
+        # shortage even when capacity was plentiful and the clock was the limit.
+        committed_minutes = sum(
+            resource.mobilisation_minutes
+            for (asset_id, resource_id), var in x.items()
+            if solver.Value(var) > 0
+            for resource in [next(r for r in resources if r.resource_id == resource_id)]
+        )
+        budget_minutes = int(input_.horizon_hours * 60)
+        remaining_minutes = budget_minutes - committed_minutes
+        capacity_allocated: dict[int, float] = {
+            r.resource_id: 0.0 for r in resources
+        }
+        for (asset_id, resource_id), var in x.items():
+            capacity_allocated[resource_id] += solver.Value(var) / 100.0
         unserved = [
-            _explain_unserved(d, eligible_pairs[d.asset_id], resources)
+            _explain_unserved(
+                d,
+                eligible_pairs[d.asset_id],
+                resources,
+                remaining_minutes=remaining_minutes,
+                capacity_allocated=capacity_allocated,
+            )
             for d in demands
             if solver.Value(served[d.asset_id]) != 1
         ]
@@ -443,19 +466,66 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
 
 
 def _explain_unserved(
-    demand: Demand, eligible: list[ResourceOption], all_resources: list[ResourceOption]
+    demand: Demand,
+    eligible: list[ResourceOption],
+    all_resources: list[ResourceOption],
+    *,
+    remaining_minutes: int | None = None,
+    capacity_allocated: dict[int, float] | None = None,
 ) -> dict:
+    """Say which constraint actually stopped this demand from being served.
+
+    The earlier version named capacity every time. On a 90-minute horizon with
+    30 units available against a requirement of 1 it reported "insufficient
+    eligible capacity: 30 available against a requirement of 1" -- a sentence
+    that contradicts itself, because the real limit was how many dispatches the
+    clock could fund.
+    """
     if not eligible:
+        return {
+            "asset_id": demand.asset_id,
+            "asset_code": demand.asset_code,
+            "asset_name": demand.asset_name,
+            "priority": demand.priority,
+            "need": demand.need,
+            "reason": (
+                "No eligible resource: every candidate is fully reserved, outside the "
+                f"{demand.service_window_minutes}-minute service window, or serves a different "
+                "infrastructure category."
+            ),
+        }
+
+    capacity = sum(r.available for r in eligible)
+    allocated = capacity_allocated or {}
+    cheapest_dispatch = min((r.mobilisation_minutes for r in eligible), default=0)
+
+    if capacity < demand.need:
         reason = (
-            "No eligible resource: every candidate is fully reserved, outside the "
-            f"{demand.service_window_minutes}-minute service window, or serves a different "
-            "infrastructure category."
+            f"Requirement exceeds total eligible capacity: {demand.need:g} needed but only "
+            f"{capacity:g} exists across {len(eligible)} eligible "
+            f"{'resource' if len(eligible) == 1 else 'resources'}."
+        )
+    elif remaining_minutes is not None and remaining_minutes < cheapest_dispatch:
+        reason = (
+            f"No mobilisation budget left: the cheapest eligible dispatch needs "
+            f"{cheapest_dispatch} min but only {max(0, remaining_minutes)} min of the "
+            "horizon is unspent, so this site cannot be reached in time."
+        )
+    elif capacity_allocated is not None and (
+        capacity - sum(allocated.get(r.resource_id, 0.0) for r in eligible) < demand.need - 1e-9
+    ):
+        spare = capacity - sum(allocated.get(r.resource_id, 0.0) for r in eligible)
+        reason = (
+            f"Eligible capacity is exhausted for this plan: {spare:g} of the {capacity:g} "
+            f"eligible capacity is still unallocated against a requirement of {demand.need:g}, "
+            "because other demands in the same plan hold the rest. Coverage is all-or-nothing, "
+            "so a partial delivery cannot be counted."
         )
     else:
-        capacity = sum(r.available for r in eligible)
         reason = (
-            f"Insufficient eligible capacity: {capacity:g} available against a requirement of "
-            f"{demand.need:g}, or the remaining capacity was committed to a higher-priority demand."
+            "Not selected by the optimiser: serving this site would have displaced a "
+            "higher-value demand, because its priority and population place it lower in the "
+            "objective."
         )
     return {
         "asset_id": demand.asset_id,
