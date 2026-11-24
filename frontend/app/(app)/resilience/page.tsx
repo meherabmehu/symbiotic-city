@@ -21,8 +21,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Banknote,
   Coins,
+  ChevronLeft,
+  ChevronRight,
   GitBranch,
+  History,
   Layers,
+  SkipBack,
+  SkipForward,
   MapPin,
   ShieldCheck,
   Split,
@@ -185,7 +190,53 @@ interface InvestmentResponse {
   notes: string[];
 }
 
-type TabId = "exposure" | "futures" | "tradeoffs" | "investment";
+interface ReplayStep {
+  index: number;
+  at: string;
+  kind: string;
+  summary: string;
+  detail: string;
+  from: string | null;
+  to: string | null;
+  asset_code?: string;
+  was?: string | null;
+  now?: string;
+}
+
+interface Snapshot {
+  moment: string;
+  status_counts: Record<string, number>;
+  assets: { id: number; code: string; name: string; category: string; status: string }[];
+  failed_asset_ids: number[];
+  incidents: { id: number; code: string; title: string; severity: string; status: string }[];
+  population_at_risk: number;
+  simulations: { run_id: number; code: string; summary: Record<string, number> }[];
+  plans_designed: number;
+  fidelity: { exact: string[]; inferred: string[]; not_reconstructed: string[] };
+}
+
+interface Replay {
+  window: { since: string; until: string };
+  steps: ReplayStep[];
+  step_count: number;
+  total_changes: number;
+  truncated: boolean;
+  snapshot_at_end: Snapshot;
+  sources: string[];
+  notes: string[];
+}
+
+interface MomentDiff {
+  first: { moment: string; status_counts: Record<string, number> };
+  second: { moment: string; status_counts: Record<string, number> };
+  changes: { asset_code: string; asset_name: string; from: string; to: string; direction: string; at: string | null }[];
+  worsened: { asset_code: string }[];
+  improved: { asset_code: string }[];
+  population_at_risk: { first: number; second: number; delta: number };
+  notes: string[];
+}
+
+type TabId = "exposure" | "futures" | "tradeoffs" | "investment" | "history";
 
 /* ------------------------------------------------------------------ pieces */
 
@@ -1048,6 +1099,268 @@ function InvestmentTab() {
   );
 }
 
+/* ------------------------------------------------------------------ history */
+
+const STEP_TONE: Record<string, string> = {
+  status: "border-amber/40",
+  simulation: "border-accent/40",
+  incident: "border-coral/40",
+  design: "border-mint/40",
+  dispatch: "border-mint/40",
+  response: "border-white/15",
+};
+
+function HistoryTab() {
+  const [steps, setSteps] = useState<number>(0);
+  const [diff, setDiff] = useState<MomentDiff | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const replay = useAsync<Replay>(() => api.get("/resilience/timetravel?limit=200"), []);
+
+  const atStep = replay.data?.steps[Math.min(steps, (replay.data?.steps.length ?? 1) - 1)] ?? null;
+
+  async function compareWindow() {
+    if (!replay.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setDiff(
+        await api.get<MomentDiff>(
+          `/resilience/timetravel/diff${qs({
+            first: replay.data.window.since,
+            second: replay.data.window.until,
+          })}`,
+        ),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {error ? <Alert tone="danger" title="Replay failed">{error}</Alert> : null}
+      {replay.error ? <Alert tone="danger" title="History unavailable">{replay.error}</Alert> : null}
+
+      <Panel>
+        <PanelHeader
+          title="Replay recorded history"
+          subtitle={
+            replay.data
+              ? `${replay.data.step_count} recorded changes between ${formatDateTime(replay.data.window.since)} and ${formatDateTime(replay.data.window.until)}`
+              : "Loading the record"
+          }
+          icon={<History className="h-4 w-4" />}
+          action={
+            replay.data ? (
+              <Button variant="secondary" size="sm" onClick={compareWindow} disabled={busy}>
+                {busy ? "Comparing…" : "Compare window ends"}
+              </Button>
+            ) : null
+          }
+        />
+        {replay.loading && !replay.data ? (
+          <LoadingBlock rows={4} label="Reading history" />
+        ) : !replay.data?.steps.length ? (
+          <EmptyState
+            title="Nothing recorded in this window"
+            description="The replay shows recorded changes only. An empty timeline is a statement about the record, not the city."
+          />
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex-1 text-[11px] text-ink-400">
+                Step {Math.min(steps + 1, replay.data.steps.length)} of {replay.data.steps.length}
+                <input
+                  type="range"
+                  min={0}
+                  max={replay.data.steps.length - 1}
+                  value={steps}
+                  onChange={(event) => setSteps(Number(event.target.value))}
+                  className="mt-1 w-full accent-[#45d8f5]"
+                  aria-label="Replay position"
+                />
+              </label>
+              <div className="flex gap-1">
+                <Button variant="secondary" size="sm" onClick={() => setSteps(0)} aria-label="Jump to first change">
+                  <SkipBack className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSteps((value) => Math.max(0, value - 1))}
+                  aria-label="Previous change"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSteps((value) => Math.min(replay.data!.steps.length - 1, value + 1))}
+                  aria-label="Next change"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSteps(replay.data!.steps.length - 1)}
+                  aria-label="Jump to latest change"
+                >
+                  <SkipForward className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+
+            {atStep ? (
+              <div className="mt-3 rounded-xl border border-accent/30 bg-accent/[0.06] p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="accent">{atStep.kind}</Badge>
+                  <span className="text-xs text-white">{atStep.summary}</span>
+                  <span className="ml-auto font-mono text-[10px] text-ink-400">
+                    {formatDateTime(atStep.at)}
+                  </span>
+                </div>
+                {atStep.detail ? <p className="mt-1 text-[11px] text-ink-300">{atStep.detail}</p> : null}
+                {atStep.was || atStep.now ? (
+                  <p className="mt-1 text-[11px] text-ink-400">
+                    Status{" "}
+                    <span className="text-ink-200">{atStep.was ?? "unknown"}</span> →{" "}
+                    <span className="text-ink-100">{atStep.now}</span>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <ol className="mt-3 max-h-80 space-y-1 overflow-y-auto pr-1 scrollbar-slim" aria-label="Recorded changes">
+              {replay.data.steps.map((step, index) => (
+                <li key={`${step.index}-${step.at}`}>
+                  <button
+                    type="button"
+                    onClick={() => setSteps(index)}
+                    className={`flex w-full items-start gap-2 rounded-lg border-l-2 px-2 py-1.5 text-left text-[11px] transition ${
+                      index === steps ? "bg-white/[0.07]" : "hover:bg-white/[0.03]"
+                    } ${STEP_TONE[step.kind] ?? "border-white/10"}`}
+                  >
+                    <span className="w-16 shrink-0 font-mono text-[10px] text-ink-500">
+                      {formatDateTime(step.at).split(",")[0]}
+                    </span>
+                    <span className="flex-1 text-ink-300">{step.summary}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+
+            <ul className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-ink-300">
+              {replay.data.notes.map((note) => (
+                <li key={note} className="flex gap-2">
+                  <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent/60" />
+                  {note}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </Panel>
+
+      {replay.data ? (
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Panel>
+            <PanelHeader
+              title="City at the end of the window"
+              subtitle={formatDateTime(replay.data.snapshot_at_end.moment)}
+              icon={<MapPin className="h-4 w-4" />}
+            />
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {Object.entries(replay.data.snapshot_at_end.status_counts).map(([status, count]) => (
+                <Metric key={status} label={titleCase(status)} value={String(count)} />
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-ink-400">
+              {formatNumber(replay.data.snapshot_at_end.population_at_risk)} people at risk ·{" "}
+              {replay.data.snapshot_at_end.incidents.length} incidents open ·{" "}
+              {replay.data.snapshot_at_end.plans_designed} plans designed
+            </p>
+            <div className="mt-3 space-y-2">
+              {(["exact", "inferred", "not_reconstructed"] as const).map((kind) => (
+                <div key={kind}>
+                  <p className="text-[10px] uppercase tracking-wider text-ink-500">
+                    {kind === "not_reconstructed" ? "Not reconstructed" : kind}
+                  </p>
+                  <ul className="mt-0.5 space-y-0.5 text-[11px] text-ink-400">
+                    {replay.data!.snapshot_at_end.fidelity[kind].map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span
+                          aria-hidden
+                          className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${
+                            kind === "exact" ? "bg-mint" : kind === "inferred" ? "bg-amber" : "bg-coral"
+                          }`}
+                        />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Between the two ends"
+              subtitle="Worse, better, or unchanged"
+              icon={<GitBranch className="h-4 w-4" />}
+            />
+            {diff ? (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <Metric label="Worsened" value={String(diff.worsened.length)} />
+                  <Metric label="Improved" value={String(diff.improved.length)} />
+                  <Metric
+                    label="Risk change"
+                    value={`${diff.population_at_risk.delta > 0 ? "+" : ""}${formatNumber(diff.population_at_risk.delta)}`}
+                    hint="people"
+                  />
+                </div>
+                <ul className="mt-3 max-h-56 space-y-1 overflow-y-auto scrollbar-slim">
+                  {diff.changes.map((change) => (
+                    <li
+                      key={`${change.asset_code}-${change.at}`}
+                      className="flex items-center gap-2 rounded-lg bg-white/[0.02] px-2 py-1 text-[11px]"
+                    >
+                      <span className="font-mono text-[10px] text-accent">{change.asset_code}</span>
+                      <span className="flex-1 truncate text-ink-400">{change.asset_name}</span>
+                      <span className="text-ink-300">
+                        {change.from} → {change.to}
+                      </span>
+                      <Badge tone={change.direction === "worse" ? "danger" : "success"}>
+                        {change.direction}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+                <ul className="mt-2 space-y-1 text-[11px] text-ink-400">
+                  {diff.notes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="text-xs text-ink-400">
+                Compare the two ends of the window to see which assets moved and in which direction.
+              </p>
+            )}
+          </Panel>
+        </div>
+      ) : null}
+
+      {replay.data ? <Assumptions items={replay.data.sources} title="Where the replay comes from" /> : null}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ page */
 
 export default function ResiliencePage() {
@@ -1080,6 +1393,7 @@ export default function ResiliencePage() {
           { id: "futures", label: "What-if futures" },
           { id: "tradeoffs", label: "Recovery trade-offs" },
           { id: "investment", label: "Investment plan" },
+          { id: "history", label: "Time travel" },
         ]}
       />
 
@@ -1090,8 +1404,10 @@ export default function ResiliencePage() {
           <FuturesTab />
         ) : tab === "tradeoffs" ? (
           <TradeoffsTab canPlan={canPlan} />
-        ) : (
+        ) : tab === "investment" ? (
           <InvestmentTab />
+        ) : (
+          <HistoryTab />
         )}
       </div>
     </>
