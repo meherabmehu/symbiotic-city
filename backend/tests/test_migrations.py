@@ -12,6 +12,7 @@ instead of in a deployment.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -58,7 +59,17 @@ def migrated(tmp_path):
 
 
 def test_single_head_revision():
-    assert len(REVISIONS) == 1, [p.name for p in REVISIONS]
+    """One head, however many revisions it takes to get there."""
+    revisions = {}
+    for path in REVISIONS:
+        source = path.read_text()
+        revision = re.search(r"^revision = [\"'](.*?)[\"']", source, re.M).group(1)
+        parent = re.search(r"^down_revision = (.*?)$", source, re.M).group(1).strip()
+        revisions[revision] = None if parent == "None" else parent.strip("\"'")
+    referenced = {parent for parent in revisions.values() if parent}
+    heads = set(revisions) - referenced
+    assert len(heads) == 1, f"expected one head, found {sorted(heads)}"
+    assert set(revisions.values()) - {None} <= set(revisions), "a revision names a missing parent"
 
 
 def test_revision_creates_every_model_table(migrated):
@@ -78,20 +89,54 @@ def test_revision_creates_every_model_table(migrated):
     assert created - {"alembic_version"} == set(Base.metadata.tables)
 
 
+def test_whatif_tables_arrive_by_migration(tmp_path):
+    """A feature that adds tables must add a revision, not rely on create_all.
+
+    ``create_all`` is what tests and the dev server use, so new tables appear
+    everywhere except on a database that was actually migrated. This asserts the
+    revision chain builds them, and that the cascade delete from scenario to
+    reading is declared -- an orphaned reading would silently outlive its
+    scenario.
+    """
+    url = f"sqlite:///{tmp_path / 'whatif.db'}"
+    result = alembic(url, "upgrade", "head")
+    assert result.returncode == 0, result.stderr
+
+    connection = sqlite3.connect(tmp_path / "whatif.db")
+    try:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "select name from sqlite_master where type='table' and name not like 'sqlite_%'"
+            )
+        }
+        ddl = connection.execute(
+            "select sql from sqlite_master where type='table' and name='whatif_observations'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert {"whatif_scenarios", "whatif_observations"} <= tables
+    assert "ON DELETE CASCADE" in ddl.upper().replace("  ", " "), ddl
+
+
 def test_revision_creates_every_foreign_key(migrated):
-    """60 foreign keys in the metadata, 60 REFERENCES clauses in the schema."""
+    """Every foreign key in the metadata exists as a REFERENCES clause."""
     import app.models  # noqa: F401
     from app.core.database import Base
 
     expected = sum(len(table.foreign_key_constraints) for table in Base.metadata.tables.values())
     _, _, references = sqlite_summary(migrated)
-    assert expected == 60
-    assert references == expected
+    assert expected >= 60  # the initial 60, plus whatever revisions added since
+    assert references == expected, (
+        f"{expected} foreign keys declared in the models, {references} created by "
+        "the revisions"
+    )
 
 
 def test_revision_creates_every_index(migrated):
+    """28 from the initial schema, plus one per index a revision adds."""
     _, indexes, _ = sqlite_summary(migrated)
-    assert indexes == 28
+    assert indexes == 29
 
 
 def test_downgrade_removes_everything(tmp_path):
