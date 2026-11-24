@@ -5,7 +5,7 @@
 Two deployables, one schema, no hidden services.
 
 ```
-browser ──► Next.js 15 (:3000) ──/api rewrite──► FastAPI (:8000) ──► SQLAlchemy 2 ──► SQLite | Postgres
+browser ──► Next.js 16 (:3000) ──/api rewrite──► FastAPI (:8000) ──► SQLAlchemy 2 ──► SQLite | Postgres
                                                       │
                                       ┌───────────────┼────────────────┐
                                       ▼               ▼                ▼

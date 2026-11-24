@@ -9,13 +9,13 @@
 
 | ধাপ | ফলাফল |
 | --- | --- |
-| `git clone` (পাবলিক, লগইন ছাড়া) | `e909d0a` — নতুন কোড সব এসেছে |
+| `git clone` (পাবলিক, লগইন ছাড়া) | `0485286` — নতুন কোড সব এসেছে |
 | venv + `pip install` | সফল |
-| `npm install` | সফল |
+| `npm install` | সফল, `npm audit` — **০টা vulnerability** |
 | `.env` ছাড়া চালু (ডিফল্ট SQLite) | ২৩টা asset, ৫টা zone নিজে থেকে সিড হয়েছে |
-| `./scripts/dev.sh` | API `:8000` উঠেছে, আসল ডেটা দিয়েছে (PS-02 = 84.3) |
+| `./scripts/dev.sh` | API `:8000`, web `:3000` উঠেছে, আসল ডেটা দিয়েছে (PS-02 = 84.3) |
 | `python scripts/smoke.py` | সব চেক পাশ |
-| `./scripts/verify.sh` | **269 passed, 10 skipped**, typecheck ও build পাশ |
+| `./scripts/verify.sh` | **276 passed, 10 skipped**, typecheck ও build পাশ |
 | `alembic upgrade head` | দুটো migration-ই চলেছে, whatif টেবিল তৈরি |
 
 ধরুন আপনি কিছুই ইনস্টল করা নেই এমন একটা ল্যাপটপে বসে আছেন।
@@ -27,7 +27,7 @@
 | জিনিস | ভার্সন | কেন |
 | --- | --- | --- |
 | Python | **৩.১১ বা তার বেশি** | backend (FastAPI + OR-Tools) |
-| Node.js | **২০ বা তার বেশি** | frontend (Next.js 15 + React 19) |
+| Node.js | **২০.৯ বা তার বেশি** | frontend (Next.js 16 + React 19) |
 | Git | যেকোনো | কোড নামাতে |
 | ইন্টারনেট | একবারই | pip আর npm প্যাকেজ নামাতে |
 
@@ -39,7 +39,7 @@
 
 ```bash
 python3 --version     # Python 3.11.x বা বেশি
-node --version        # v20.x বা বেশি
+node --version        # v20.9 বা বেশি (Next.js 16-এর শর্ত)
 npm --version
 ```
 
@@ -62,7 +62,7 @@ cd symbiotic-city
 
 ```bash
 git log --oneline -1
-# e909d0a writing down what was measured
+# 0485286 Upgrade Next.js to 16.4.6 to clear security advisories
 ```
 
 ---
@@ -93,6 +93,28 @@ cd ..
 ```
 
 `cd ..` টা ভুলবেন না — এতে আবার রুটে ফিরে আসবেন, পরের ধাপের জন্য।
+
+**এই ধাপে যা দেখতে পারেন — দুটোই স্বাভাবিক, ভয় পাবেন না:**
+
+| যা দেখছেন | মানে কী | কী করবেন |
+| --- | --- | --- |
+| `npm warn deprecated recharts@2.15.0` | recharts লাইব্রেরির পুরনো ভার্সন | কিছুই না। অ্যাপ ঠিক চলবে, শুধু ভবিষ্যতে v3-এ যাওয়া যাবে |
+| `blocked 1 postinstall` / `sharp` নিয়ে সতর্কবার্তা | npm এখন ডিফল্টে প্যাকেজের install-script আটকে রাখে | কিছুই না। এই প্রজেক্টে `next/image` ব্যবহার হয় না, তাই `sharp` লাগেই না |
+| `sharp`-এর ওই বার্তাটা আর দেখতে না চাইলে | — | `npm approve-scripts sharp` চালান, শুধু বার্তাটা চুপ হবে |
+
+**হিসাব করে নিন ইনস্টল ঠিক হয়েছে কি না:**
+
+```bash
+npm audit
+```
+
+শেষ লাইনে **`found 0 vulnerabilities`** দেখতে হবে। ওই সংখ্যাটা ০ না হলে নিচের
+«সমস্যা হলে» টেবিল দেখুন।
+
+> **⚠ `npm audit fix --force` চালাবেন না।** ওটা জোর করে major ভার্সন বদলে দেয়
+> (Next.js-কে ১৬-তে নিয়ে যায় এবং অন্য প্যাকেজও ভেঙে দিতে পারে)। আগের ভার্সনগুলোতে
+> যে নিরাপত্তা ত্রুটি ছিল, সেগুলো এই রিপোতে ইতিমধ্যেই ঠিক করা আছে — তাই ফ্রেশ
+> clone-এ `npm audit` এমনিই ০ দেখাবে।
 
 ---
 
@@ -197,11 +219,11 @@ cp .env.example .env
 
 সব লাইনে `PASS` দেখলে বোঝবেন login, সিমুলেশন, অপ্টিমাইজার, ওয়ার্কফ্লো — সব ঠিক।
 
-**পুরো টেস্ট স্যুট** (২৬৯টা টেস্ট, ~২ মিনিট ২০ সেকেন্ড):
+**পুরো টেস্ট স্যুট** (২৭৬টা টেস্ট, ~২ মিনিট ৩০ সেকেন্ড):
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
-# 269 passed, 10 skipped
+# 276 passed, 10 skipped
 ```
 
 **সব একসাথে** (টেস্ট + typecheck + build):
@@ -223,7 +245,11 @@ cp .env.example .env
 | ড্যাশবোর্ডে সব শূন্য | ডেটা সিড হয়নি | `.env`-এ `SEED_DEMO_DATA=1` দিন, ডাটাবেজ মুছে আবার চালান |
 | ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | `rm backend/data/symbiotic_city.db` — পরের বার চালু হলে নতুন করে সিড হবে |
 | `Permission denied: ./scripts/dev.sh` | এক্সিকিউট বিট নেই | `chmod +x scripts/*.sh` |
-| `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০+ দরকার |
+| `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০.৯+ দরকার |
+| `npm install` শেষে `1 critical` / `3 vulnerabilities` | পুরনো `package-lock.json` ধরে আছে | আগে `git pull` করুন। তাও এলে `npm audit fix --force` **চালাবেন না** — বরং `frontend` ফোল্ডারে `package-lock.json` মুছে আবার `npm install` (এতে lock নতুন করে তৈরি হবে, `package.json`-এর ভার্সনই মানবে) |
+| `blocked … postinstall` (`sharp`) | npm-এর allow-scripts | উপেক্ষা করুন, বা `npm approve-scripts sharp` |
+| `Another next dev server is already running` | একই ফোল্ডারে দুটো dev সার্ভার | আগেরটা বন্ধ করুন (Ctrl+C), তারপর আবার |
+| Next.js পুরনো `.next` নিয়ে ৫০০ error | আগের ভার্সনের build cache | `rm -rf frontend/.next` (PowerShell: `Remove-Item -Recurse -Force frontend\.next`) |
 | PowerShell: `'&&' is not a valid statement separator` | PowerShell 5.1 `&&` চেনে না | `;` এর বদলে এক লাইন করে দিন, বা `.\scripts\dev.ps1 setup` |
 | PowerShell: `running scripts is disabled` | Execution Policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | Windows: `python3` দিলে Store খোলে | Microsoft Store stub | `python` লিখুন |
