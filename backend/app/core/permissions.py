@@ -59,6 +59,9 @@ PERMISSIONS: dict[str, str] = {
     "audit:read": "Read system audit logs",
     "workflow:read": "View workflow instances",
     "workflow:manage": "Advance or retry workflow instances",
+    # resilience intelligence
+    "resilience:read": "View criticality, risk heatmaps, simulations and replay",
+    "resilience:plan": "Run the multi-objective planner and the investment planner",
 }
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
@@ -81,6 +84,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "analytics:read",
         "workflow:read",
         "workflow:manage",
+        "resilience:read",
+        "resilience:plan",
     },
     Role.FIELD_ENGINEER: {
         "infrastructure:read",
@@ -89,6 +94,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "task:read",
         "task:execute",
         "resource:read",
+        "resilience:read",
     },
     Role.CITY_ANALYST: {
         "infrastructure:read",
@@ -101,6 +107,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "analytics:read",
         "analytics:export",
         "workflow:read",
+        "resilience:read",
+        "resilience:plan",
     },
 }
 
