@@ -18,7 +18,10 @@ from app.services import optimization as service
 router = APIRouter(tags=["optimization"])
 
 
-@router.get("/optimization/plans")
+@router.get(
+    "/optimization/plans",
+    dependencies=[Depends(require_permissions("optimization:read"))],
+)
 def list_plans(
     db: DbSession,
     user: CurrentUser,
@@ -34,7 +37,10 @@ def list_plans(
     )
 
 
-@router.get("/optimization/requests")
+@router.get(
+    "/optimization/requests",
+    dependencies=[Depends(require_permissions("optimization:read"))],
+)
 def list_requests(db: DbSession, user: CurrentUser, page: Pagination):
     from sqlalchemy import func
 
@@ -88,7 +94,10 @@ def submit(payload: OptimizationSubmitRequest, request: Request, db: DbSession, 
     return ok({"request": _request_dict(req), "plan": service.plan_to_dict(db, plan, detail=True), "solver": result})
 
 
-@router.get("/optimization/plans/{plan_id}")
+@router.get(
+    "/optimization/plans/{plan_id}",
+    dependencies=[Depends(require_permissions("optimization:read"))],
+)
 def get_plan(plan_id: int, db: DbSession, user: CurrentUser):
     plan = db.get(OptimizationPlan, plan_id)
     if plan is None:

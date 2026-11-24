@@ -18,14 +18,20 @@ from app.services import resources as service
 router = APIRouter(tags=["resources"])
 
 
-@router.get("/resources/categories")
+@router.get(
+    "/resources/categories",
+    dependencies=[Depends(require_permissions("resource:read"))],
+)
 def categories():
     from app.models.operations import RESOURCE_CATEGORY_LABELS
 
     return ok([{"key": k, "label": v} for k, v in RESOURCE_CATEGORY_LABELS.items()])
 
 
-@router.get("/resources")
+@router.get(
+    "/resources",
+    dependencies=[Depends(require_permissions("resource:read"))],
+)
 def list_resources(
     db: DbSession,
     user: CurrentUser,
@@ -56,7 +62,10 @@ def list_resources(
     )
 
 
-@router.get("/resources/utilisation")
+@router.get(
+    "/resources/utilisation",
+    dependencies=[Depends(require_permissions("resource:read"))],
+)
 def utilisation(db: DbSession, user: CurrentUser):
     return ok(service.utilisation_summary(db))
 
@@ -92,7 +101,10 @@ def update_resource(
     return ok(service.resource_to_dict(db, resource))
 
 
-@router.get("/resources/reservations")
+@router.get(
+    "/resources/reservations",
+    dependencies=[Depends(require_permissions("resource:read"))],
+)
 def reservations(
     db: DbSession,
     user: CurrentUser,
@@ -113,7 +125,10 @@ def reservations(
     )
 
 
-@router.get("/resources/{resource_id}")
+@router.get(
+    "/resources/{resource_id}",
+    dependencies=[Depends(require_permissions("resource:read"))],
+)
 def get_resource(resource_id: int, db: DbSession, user: CurrentUser):
     resource = db.get(Resource, resource_id)
     if resource is None:

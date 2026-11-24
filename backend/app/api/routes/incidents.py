@@ -14,7 +14,10 @@ from app.services import incidents as service
 router = APIRouter(tags=["incidents"])
 
 
-@router.get("/incidents")
+@router.get(
+    "/incidents",
+    dependencies=[Depends(require_permissions("incident:read"))],
+)
 def list_incidents(
     db: DbSession,
     user: CurrentUser,
@@ -49,7 +52,10 @@ def list_incidents(
     )
 
 
-@router.get("/incidents/summary")
+@router.get(
+    "/incidents/summary",
+    dependencies=[Depends(require_permissions("incident:read"))],
+)
 def incident_summary(db: DbSession, user: CurrentUser):
     from sqlalchemy import func, select
 
@@ -85,7 +91,10 @@ def create_incident(payload: IncidentCreate, request: Request, db: DbSession, us
     return ok(service.incident_to_dict(db, incident, detail=True))
 
 
-@router.get("/incidents/{incident_id}")
+@router.get(
+    "/incidents/{incident_id}",
+    dependencies=[Depends(require_permissions("incident:read"))],
+)
 def get_incident(incident_id: int, db: DbSession, user: CurrentUser):
     incident = service.get_incident(db, incident_id)
     return ok(service.incident_to_dict(db, incident, detail=True))
@@ -105,7 +114,9 @@ def update_incident(
     return ok(service.incident_to_dict(db, incident, detail=True))
 
 
-@router.post("/incidents/{incident_id}/transition", dependencies=[Depends(require_permissions("incident:read"))])
+# Deriving incident state is a write action. It was gated on incident:read, which a
+# field engineer holds, so an engineer could verify and progress an incident.
+@router.post("/incidents/{incident_id}/transition", dependencies=[Depends(require_permissions("incident:write"))])
 def transition_incident(
     incident_id: int, payload: IncidentTransition, request: Request, db: DbSession, user: CurrentUser
 ):

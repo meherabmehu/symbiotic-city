@@ -139,9 +139,12 @@ def permissions(user: CurrentUser, _: None = Depends(require_permissions("user:r
     return ok([{"key": k, "description": v} for k, v in sorted(PERMISSIONS.items())])
 
 
+# Reading settings is user:read-level administration; changing them needs
+# settings:manage. Gating the read on the write permission locked out the
+# administrator screens that only display them.
 @router.get("/settings")
 def get_settings(
-    db: DbSession, user: CurrentUser, _: None = Depends(require_permissions("settings:manage"))
+    db: DbSession, user: CurrentUser, _: None = Depends(require_permissions("user:read"))
 ):
     rows = db.scalars(select(SystemSetting).order_by(SystemSetting.section, SystemSetting.key)).all()
     return ok(
@@ -208,7 +211,10 @@ def system_health(db: DbSession):
     )
 
 
-@router.get("/system/demo-info")
+@router.get(
+    "/system/demo-info",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def demo_info(db: DbSession, user: CurrentUser):
     from app.models.infrastructure import InfrastructureAsset
     from app.models.operations import Incident, RepairTask, Resource
