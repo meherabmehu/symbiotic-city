@@ -306,6 +306,33 @@ def role_appropriate_scope(db: Session, permissions: set[str]) -> dict:
     }
 
 
+# A spreadsheet treats a cell that starts with one of these as a formula. Export
+# rows carry user-written text (incident titles, asset names, notes), so a title
+# beginning with "=" is enough to run a HYPERLINK or a DDE payload in the
+# reviewer's spreadsheet: classic CSV injection (CWE-1236). Quoting does not help
+# -- Excel and LibreOffice still evaluate the cell.
+_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutralise(value):
+    """Stop a spreadsheet from reading user text as a formula.
+
+    A leading apostrophe makes the cell literal in Excel and LibreOffice while
+    the visible text stays the same. Values that are genuinely numeric are left
+    alone, so -3.5 and +12 still arrive as numbers rather than as text.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    if value[0] not in _FORMULA_LEADS:
+        return value
+    try:
+        float(value)
+    except ValueError:
+        return "'" + value
+    # "-3.5" and "+12" are numbers, not formulas; "=1+1" is still a formula.
+    return value if value[0] in "+-" else "'" + value
+
+
 def export_csv(kind: str, rows: list[dict]) -> str:
     buffer = io.StringIO()
     if not rows:
@@ -314,7 +341,12 @@ def export_csv(kind: str, rows: list[dict]) -> str:
     writer = csv.DictWriter(buffer, fieldnames=list(rows[0].keys()), extrasaction="ignore")
     writer.writeheader()
     for row in rows:
-        writer.writerow({k: (json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in row.items()})
+        writer.writerow(
+            {
+                k: _neutralise(json.dumps(v) if isinstance(v, (dict, list)) else v)
+                for k, v in row.items()
+            }
+        )
     return buffer.getvalue()
 
 

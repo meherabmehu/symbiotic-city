@@ -398,3 +398,69 @@ def test_second_open_incident_for_same_asset_is_refused(as_role):
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "duplicate_incident"
     assert second.json()["error"]["details"]["incident_code"] == first.json()["data"]["code"]
+
+
+# --------------------------------------------------------------------------- #
+# CSV export must not hand a spreadsheet a formula written by a user.
+#
+# Incident titles, asset names and notes are free text. A title starting with
+# "=" becomes a live formula when the exported file is opened: HYPERLINK and DDE
+# payloads are the usual carriers. Quoting the CSV does not prevent evaluation,
+# so the value itself has to be neutralised. Reachable as a crossed-permission
+# attack: an operator writes incidents, an analyst opens the export.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '=HYPERLINK("http://evil.example/x","payroll")',
+        "@SUM(1+1)*cmd|calc",
+        "+1-1",
+        "-2+3",
+    ],
+)
+def test_export_csv_neutralises_formula_titles(as_role, payload):
+    import uuid as _uuid
+
+    operator = as_role("city_operator")
+    assets = operator.get("/api/infrastructure?page_size=1").json()["data"]
+    created = operator.post(
+        "/api/incidents",
+        json={
+            "title": payload,
+            "description": "csv injection probe",
+            "primary_asset_id": assets[0]["id"],
+            "category": f"inject_{_uuid.uuid4().hex[:8]}",
+            "severity": "low",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    analyst = as_role("city_analyst")
+    body = analyst.get("/api/analytics/export?kind=incidents").text
+
+    for line in body.splitlines():
+        for cell in line.split(","):
+            value = cell.strip().strip('"').strip()
+            if len(value) > 1 and value[0] in "=+-@":
+                assert value.lstrip("+-").replace(".", "").isdigit(), (
+                    f"a spreadsheet would evaluate {value[:60]!r} as a formula"
+                )
+
+
+def test_export_csv_keeps_genuine_numbers_as_numbers():
+    """Neutralising must not turn every negative number into text."""
+    from app.services.analytics import export_csv
+
+    text = export_csv("probe", [{"label": "delta", "value": -3.5, "rise": "+12"}])
+    line = text.splitlines()[1]
+    assert "'-3.5" not in line, "a real number was quoted into text"
+    assert "'+12" not in line
+
+
+def test_export_csv_leaves_ordinary_text_alone():
+    from app.services.analytics import export_csv
+
+    text = export_csv("probe", [{"title": "Central substation feeder 3 overload"}])
+    assert text.splitlines()[1] == "Central substation feeder 3 overload"
