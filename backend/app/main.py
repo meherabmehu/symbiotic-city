@@ -19,6 +19,7 @@ from app.api.routes import (
     optimization,
     resources,
     simulations,
+    resilience,
     tasks,
     workflows,
 )
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
         workflows.router,
         analytics.router,
         admin.router,
+        resilience.router,
     ):
         app.include_router(router, prefix=settings.api_prefix)
 
