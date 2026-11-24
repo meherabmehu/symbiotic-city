@@ -73,6 +73,7 @@ const NAV: NavGroup[] = [
       { href: "/simulation", label: "Failure Simulation Lab", icon: Cpu, permission: "simulation:read" },
       { href: "/optimization", label: "AI Optimisation", icon: Zap, permission: "optimization:read" },
       { href: "/resources", label: "Resource Management", icon: Gauge, permission: "resource:read" },
+      { href: "/resilience", label: "Resilience Intelligence", icon: ShieldCheck, permission: "resilience:read" },
     ],
   },
   {
