@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.api.deps import CurrentUser, DbSession, require_permissions
 from app.core.responses import ApiError, ok
 from app.core.types import utcnow
+from app.schemas.optimization import OptimizationSubmitRequest
 from app.schemas.simulation import WhatIfObserveRequest, WhatIfScenarioCreate
 from app.services import criticality as criticality_service
 
@@ -226,3 +227,59 @@ def compare_whatifs(
     from app.services import whatif as whatif_service
 
     return ok(whatif_service.compare(db, ids))
+
+
+# --------------------------------------------------------------------------- #
+# Multi-objective recovery planning
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/resilience/frontier",
+    dependencies=[Depends(require_permissions("resilience:plan"))],
+)
+def recovery_frontier(
+    payload: OptimizationSubmitRequest,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Every non-dominated recovery plan, with the trade-off stated.
+
+    Deliberately behind ``resilience:plan`` rather than a read permission: it
+    costs several solver runs and its whole purpose is to inform a decision, so
+    it belongs with the people who make one. Nothing is persisted -- this is a
+    comparison, not a commitment.
+    """
+    from app.services import multiobjective
+    from app.services import optimization as optimization_service
+
+    input_, _single = optimization_service.solve(db, payload)
+    search = multiobjective.search(input_)
+    return ok(
+        {
+            "objectives": {
+                "criticality": (
+                    "priority-weighted value of fully served demands "
+                    "(exponential weights, 60 for P1 down to 1 for P5)"
+                ),
+                "coverage": "number of demands fully served",
+                "cost": "mobilisation cost: hourly cost x quantity x hours / need",
+            },
+            "plans": [plan.as_dict(detailed=index == 0) for index, plan in enumerate(search["frontier"])],
+            "frontier_size": len(search["frontier"]),
+            "plans_explored": search["explored"],
+            "coverage_requirements_tried": search["directions_run"],
+            "solver_ms": search["solver_ms"],
+            "skipped": search["skipped"],
+            "dominated": search["dominated"],
+            "notes": search["notes"],
+            "assumptions": [
+                "Coverage is all-or-nothing per demand, matching the optimiser's rule: "
+                "a partially supplied hospital counts as unserved.",
+                "The first plan is returned in full so the frontier can be inspected "
+                "without a second request; the others are summaries.",
+                "Solving is deterministic: the same demands, resources and horizon "
+                "produce the same frontier.",
+            ],
+        }
+    )

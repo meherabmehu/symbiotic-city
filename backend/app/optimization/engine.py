@@ -42,6 +42,14 @@ outranks five commercial facilities. Costs only break ties between equal-value
 demands, matching real dispatch practice ("serve the most critical, cheapest
 way").
 
+Objective weights
+=================
+``OptimizationInput.objective_weights`` (optional) rebalances the things a
+dispatcher actually trades off -- criticality served, how many sites are restored,
+mobilisation cost, and population protected. Left unset, the weights reproduce the rule above exactly,
+so existing callers are unaffected. Set, they let a multi-objective search ask
+"what does protecting more people cost?" rather than assuming the answer.
+
 Explainability
 ==============
 Every plan returns the assignments chosen, the demands that went unserved with
@@ -51,6 +59,7 @@ from the solver's assumption solving.
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -99,6 +108,15 @@ class OptimizationInput:
     must_serve_priority: int | None = 1
     max_assignments_per_demand: int = 3
     time_limit_seconds: float = 5.0
+    # How much each objective matters when they conflict. ``None`` keeps the
+    # documented lexicographic behaviour (criticality first, cost as a tie-break),
+    # which is what every existing caller relies on. A multi-objective search sets
+    # these to explore the trade-off instead of assuming it.
+    objective_weights: dict[str, float] | None = None
+    # Minimum number of demands that must be fully served. A feasibility
+    # constraint, not a preference: it is what lets a caller ask "the best plan
+    # that restores at least six sites" instead of hoping a weight finds it.
+    min_coverage: int | None = None
 
 
 @dataclass
@@ -143,6 +161,7 @@ class OptimizationResult:
     explanation: list[str]
     infeasibility_reason: str | None = None
     debug: dict = field(default_factory=dict)
+    objective_scale: int = 1
 
     def as_dict(self) -> dict:
         return {
@@ -160,6 +179,7 @@ class OptimizationResult:
             "explanation": self.explanation,
             "infeasibility_reason": self.infeasibility_reason,
             "debug": self.debug,
+            "objective_scale": self.objective_scale,
         }
 
 
@@ -182,6 +202,35 @@ def _eligible(demand: Demand, resource: ResourceOption) -> bool:
     if resource.serves_categories and demand.category not in resource.serves_categories:
         return False
     return True
+
+
+def _weights(
+    objective_weights: dict[str, float] | None,
+) -> tuple[dict[str, float], int]:
+    """Normalise objective weights, keeping the documented default intact.
+
+    The default is not a balanced weighting of three equal goals. It is the
+    dispatch rule the city actually uses: protect criticality first, and let cost
+    separate otherwise-equal demands. That is expressed by criticality
+    dominating cost by a wide margin, with population already folded into the
+    criticality term. Making this explicit means a multi-objective search can move
+    the weights without the default drifting.
+    """
+    if not objective_weights:
+        # scale 1, both coefficients 1: bit-for-bit the objective that was here
+        # before weighted search existed.
+        return {"criticality": 1.0, "cost": 1.0, "population": 0.0, "coverage": 0.0}, 1
+    allowed = {"criticality", "cost", "population", "coverage"}
+    unknown = set(objective_weights) - allowed
+    if unknown:
+        raise ValueError(f"unknown objective weight(s): {sorted(unknown)}")
+    weights = {key: max(0.0, float(objective_weights.get(key, 0.0))) for key in allowed}
+    top = max(weights.values())
+    if top <= 0:
+        raise ValueError("at least one objective weight must be positive")
+    # normalise so the largest weight is 1.0, then use a 1000-point scale so
+    # gentle weightings still survive integer rounding in the solver.
+    return {key: value / top for key, value in weights.items()}, 1000
 
 
 def optimize(input_: OptimizationInput) -> OptimizationResult:
@@ -288,6 +337,11 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
         if mandatory:
             model.Add(sum(served[d.asset_id] for d in mandatory) == len(mandatory))
 
+    # 5. coverage floor: "at least this many sites restored"
+    if input_.min_coverage is not None:
+        floor = max(0, min(int(input_.min_coverage), len(demands)))
+        model.Add(sum(served[d.asset_id] for d in demands) >= floor)
+
     # objective
     # Values and costs share one scale: `x` is a quantity scaled by 100, and
     # demand values are scaled by 100 too, so a full hospital service is worth
@@ -301,7 +355,18 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
             var = x[(d.asset_id, r.resource_id)]
             cost_per_unit = int(round(r.hourly_cost * d.estimated_hours / max(1.0, d.need)))
             cost_terms.append(cost_per_unit * var)
-    model.Maximize(sum(value_terms) - sum(cost_terms))
+    weights, scale = _weights(input_.objective_weights)
+    population_terms = [int(round(d.population)) * served[d.asset_id] for d in demands]
+    coverage_terms = [served[d.asset_id] for d in demands]
+    model.Maximize(
+        int(round(weights["criticality"] * scale)) * sum(value_terms)
+        - int(round(weights["cost"] * scale)) * sum(cost_terms)
+        + int(round(weights["population"] * scale)) * sum(population_terms)
+        # A reward per fully served demand, deliberately separate from the value
+        # term: "restore as many sites as possible" is not the same policy as
+        # "protect the most critical sites", and a coordinator may want either.
+        + int(round(weights["coverage"] * scale)) * sum(coverage_terms)
+    )
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = max(1.0, input_.time_limit_seconds)
@@ -397,7 +462,7 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
         explanation.append(
             f"Served {len(covered)} of {len(demands)} demands "
             f"({100.0 * len(covered) / len(demands):.0f}% coverage) with objective value "
-            f"{solver.ObjectiveValue():.0f}."
+            f"{solver.ObjectiveValue() / scale:.0f}."
         )
         served_priorities = sorted({d.priority for d in covered})
         if served_priorities:
@@ -418,7 +483,7 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
         covered_demand = len(covered_ids)
         return OptimizationResult(
             status=result_status,
-            objective_value=solver.ObjectiveValue(),
+            objective_value=solver.ObjectiveValue() / scale,
             assignments=rows,
             unserved=unserved,
             resource_usage=resource_usage,
@@ -428,6 +493,7 @@ def optimize(input_: OptimizationInput) -> OptimizationResult:
             wall_ms=wall_ms,
             explanation=explanation,
             debug={"solver_status": solver.StatusName(status), "branches": solver.NumBranches()},
+            objective_scale=scale,
         )
 
     # infeasible / unknown: derive a human explanation

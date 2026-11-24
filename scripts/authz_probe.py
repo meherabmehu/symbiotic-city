@@ -78,6 +78,10 @@ GET_PATHS = [
     "/analytics/incidents",
     "/analytics/recovery",
     "/analytics/export",
+    "/resilience/criticality",
+    "/resilience/heatmap",
+    "/resilience/whatif",
+    "/resilience/whatif/compare?ids=1&ids=2",
 ]
 
 MUTATIONS = [
@@ -92,6 +96,8 @@ MUTATIONS = [
                                   "initial_failure_ids": [1], "cascade_threshold": 0.35,
                                   "max_depth": 6, "random_seed": 42}),
     ("PATCH", "/settings/cascade_threshold", {"value": "0.35"}),
+    ("POST", "/resilience/whatif", {"name": "authz probe", "initial_failure_ids": [1]}),
+    ("POST", "/resilience/frontier", {"title": "authz probe", "demands": []}),
 ]
 
 
