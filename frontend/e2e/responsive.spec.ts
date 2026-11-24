@@ -31,6 +31,10 @@ const ROUTES: { path: string; role: DemoRole }[] = [
   { path: "/notifications", role: "operator" },
   { path: "/profile", role: "operator" },
   { path: "/docs", role: "operator" },
+  // The resilience page is the widest of the new screens: a map, a ranked table
+  // and a comparison table. The analyst holds resilience:plan, so the planning
+  // panels render rather than their permission notice.
+  { path: "/resilience", role: "analyst" },
   // Administration screens are the widest (dense tables) and the most likely to
   // overflow, so they are covered explicitly rather than assumed.
   { path: "/admin/users", role: "admin" },
