@@ -152,6 +152,23 @@ def change_status(
         return asset
     previous = asset.status
     if previous == new_status:
+        # An operator re-asserting the current state is still a statement of
+        # record: "this asset is down because of its own fault, not because of
+        # the feeder". Recording it keeps the audit trail truthful and lets
+        # dependency recovery tell whose outage it is. Silently dropping it lost
+        # that provenance. All form of the reset flows go through here.
+        if previous in (AssetStatus.OFFLINE, AssetStatus.DEGRADED):
+            db.add(
+                InfrastructureStatusHistory(
+                    asset_id=asset.id,
+                    previous_status=previous,
+                    new_status=new_status,
+                    reason=(reason or "Status confirmed")[:300],
+                    changed_by_id=actor_id,
+                    changed_at=utcnow(),
+                )
+            )
+            db.flush()
         return asset
     asset.status = new_status
     asset.updated_at = utcnow()
@@ -169,6 +186,44 @@ def change_status(
     if cascade:
         propagate_status(db, asset, previous=previous, actor_id=actor_id)
     return asset
+
+
+# History rows that record a status this module wrote on the *target* asset are
+# tagged so recovery can tell "I caused this" from "someone else caused this".
+CASCADE_TAG = "[cascade] "
+
+
+def _cascade_origin(db: Session, asset_id: int) -> bool:
+    """Was this asset's current status written by dependency propagation?
+
+    A status is propagation-owned when the most recent history row for the asset
+    was written by propagate_status rather than by a human or a workflow. The
+    marker lives in the history reason, so no new columns are needed and the
+    audit trail stays the single source of truth.
+    """
+    latest = db.scalars(
+        select(InfrastructureStatusHistory)
+        .where(InfrastructureStatusHistory.asset_id == asset_id)
+        .order_by(InfrastructureStatusHistory.changed_at.desc(), InfrastructureStatusHistory.id.desc())
+        .limit(1)
+    ).first()
+    if latest is None:
+        return False
+    return (latest.reason or "").startswith(CASCADE_TAG)
+
+
+def _status_before_cascade(db: Session, asset_id: int) -> str | None:
+    """The status the asset held immediately before the cascade wrote over it."""
+    rows = db.scalars(
+        select(InfrastructureStatusHistory)
+        .where(InfrastructureStatusHistory.asset_id == asset_id)
+        .order_by(InfrastructureStatusHistory.changed_at.desc(), InfrastructureStatusHistory.id.desc())
+        .limit(10)
+    ).all()
+    for row in rows:
+        if (row.reason or "").startswith(CASCADE_TAG):
+            return row.previous_status
+    return None
 
 
 def propagate_status(
@@ -201,10 +256,26 @@ def propagate_status(
                 else target.status
             )
         elif previous == AssetStatus.OFFLINE and asset.status == AssetStatus.OPERATIONAL:
-            target_status = AssetStatus.OPERATIONAL if target.status in (
-                AssetStatus.OFFLINE,
-                AssetStatus.DEGRADED,
-            ) else target.status
+            # Recovery must not touch a dependent that is down for its own reason.
+            # Only a status this propagation wrote (or a degraded asset, which can
+            # only have been degraded by a cascade -- degrade is not user settable)
+            # is ours to clear. Without this test, restoring a feeder claimed an
+            # unrelated hospital outage had been fixed.
+            ours = _cascade_origin(db, target.id)
+            if not (ours or target.status == AssetStatus.DEGRADED):
+                continue
+            # Restore to what the asset was before the cascade, not to a state this
+            # function invents. The asset may have been in scheduled maintenance;
+            # promoting it to operational silently cancelled that work.
+            restored = _status_before_cascade(db, target.id)
+            if restored is None or restored not in (
+                AssetStatus.OPERATIONAL,
+                AssetStatus.MAINTENANCE,
+            ):
+                restored = AssetStatus.OPERATIONAL
+            if restored == target.status:
+                continue
+            target_status = restored
         else:
             continue
         if target_status != target.status:
@@ -213,7 +284,7 @@ def propagate_status(
                     asset_id=target.id,
                     previous_status=target.status,
                     new_status=target_status,
-                    reason=f"Dependency propagation from {asset.code}",
+                    reason=f"{CASCADE_TAG}{asset.code} ({target.status} -> {target_status})",
                     changed_by_id=actor_id,
                     changed_at=utcnow(),
                 )
