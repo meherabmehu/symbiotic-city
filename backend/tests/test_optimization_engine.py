@@ -134,3 +134,73 @@ def test_explanation_is_human_readable_and_explainable():
     assert "all-or-nothing" in joined
     for assignment in result.assignments:
         assert "priority P" in assignment.rationale
+
+
+# --------------------------------------------------------------------------- #
+# The unserved report must name the constraint that actually bound the demand.
+#
+# It used to name capacity every time, producing sentences that contradicted
+# themselves ("insufficient eligible capacity: 30 available against a requirement
+# of 1") when the real limit was the mobilisation horizon. A plan explanation is
+# part of the product: an operator decides what to escalate from it.
+# --------------------------------------------------------------------------- #
+
+
+def _single_demand(asset_id: int, need: float, eligible=("generator",)) -> Demand:
+    return Demand(
+        asset_id,
+        f"AS-{asset_id:02d}",
+        f"Asset {asset_id}",
+        "hospital",
+        need,
+        2,
+        500,
+        list(eligible),
+        600,
+        2.0,
+    )
+
+
+def test_unserved_reason_names_the_horizon_when_the_clock_is_the_limit():
+    """Plenty of capacity, but only enough mobilisation budget for one dispatch."""
+    many = [_single_demand(i, 1.0) for i in range(1, 6)]
+    # GEN-03 mobilises in 45 min, so a 60-minute horizon funds exactly one dispatch.
+    resources = [ResourceOption(3, "GEN-03", "Ampere 45", "generator", 30, 85, 45, ["hospital"])]
+    result = optimize(
+        OptimizationInput(demands=many, resources=resources, horizon_hours=1.0)
+    )
+    assert result.status == OPTIMAL
+    assert result.covered_demand == 1
+
+    reason = result.unserved[0]["reason"].lower()
+    assert "mobilisation budget" in reason or "horizon" in reason, (
+        f"expected a horizon explanation, got: {result.unserved[0]['reason']}"
+    )
+    assert "insufficient eligible capacity" not in reason, (
+        "capacity was 30 against a requirement of 1; blaming capacity is false"
+    )
+
+
+def test_unserved_reason_names_capacity_when_the_requirement_cannot_fit():
+    """No horizon can help: the requirement exceeds every eligible resource."""
+    huge = [_single_demand(i, 500.0) for i in range(1, 4)]
+    resources = [ResourceOption(3, "GEN-03", "Ampere 45", "generator", 30, 85, 45, ["hospital"])]
+    result = optimize(
+        OptimizationInput(demands=huge, resources=resources, horizon_hours=72.0)
+    )
+    assert result.covered_demand == 0
+    reason = result.unserved[0]["reason"]
+    assert "exceeds total eligible capacity" in reason, f"got: {reason}"
+    assert "500" in reason and "30" in reason, "the numbers that bound it must appear"
+
+
+def test_unserved_reason_names_commitment_when_other_demands_hold_the_capacity():
+    """One generator, two demands: the second loses the capacity to the first."""
+    demands = [_single_demand(i, 90.0) for i in range(1, 3)]
+    resources = [ResourceOption(1, "GEN-01", "Atlas 250", "generator", 100, 180, 25, ["hospital"])]
+    result = optimize(
+        OptimizationInput(demands=demands, resources=resources, horizon_hours=72.0)
+    )
+    assert result.covered_demand == 1
+    reason = result.unserved[0]["reason"]
+    assert "exhausted for this plan" in reason, f"got: {reason}"
