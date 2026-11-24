@@ -43,10 +43,9 @@ node --version        # v20.x বা বেশি
 npm --version
 ```
 
-> **Windows ব্যবহার করলে:** সবচেয়ে ঝামেলাহীন পথ হলো **WSL2** (Ubuntu) খুলে তার
-> ভেতরে নিচের কমান্ডগুলো চালানো। কারণ প্রজেক্টের স্ক্রিপ্টগুলো bash-এর জন্য লেখা।
-> PowerShell-এ করতে চাইলে `python3` এর জায়গায় `python` লিখুন, আর
-> `.venv/bin/python` এর জায়গায় `.venv\Scripts\python`।
+> **Windows ব্যবহার করলে** — পুরো সেকশন আছে নিচে: **[উইন্ডোজ / PowerShell](#উইন্ডোজ--powershell)**।
+> সংক্ষেপে: PowerShell 5.1-এ `&&` চলে না, তাই নিচের bash কমান্ডগুলো হুবহু পেস্ট করলে
+> কাজ করবে না। এর জন্য আলাদা স্ক্রিপ্ট `scripts\dev.ps1` দেওয়া আছে।
 
 ---
 
@@ -225,6 +224,10 @@ cp .env.example .env
 | ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | `rm backend/data/symbiotic_city.db` — পরের বার চালু হলে নতুন করে সিড হবে |
 | `Permission denied: ./scripts/dev.sh` | এক্সিকিউট বিট নেই | `chmod +x scripts/*.sh` |
 | `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০+ দরকার |
+| PowerShell: `'&&' is not a valid statement separator` | PowerShell 5.1 `&&` চেনে না | `;` এর বদলে এক লাইন করে দিন, বা `.\scripts\dev.ps1 setup` |
+| PowerShell: `running scripts is disabled` | Execution Policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
+| Windows: `python3` দিলে Store খোলে | Microsoft Store stub | `python` লিখুন |
+| Windows: `.venv/bin/python` পাওয়া যায় না | উইন্ডোজে ফোল্ডার `Scripts` | `.venv\Scripts\python.exe` |
 
 **শূন্য থেকে নতুন করে শুরু করতে:**
 
@@ -281,3 +284,118 @@ cd backend && ../.venv/bin/python -m alembic upgrade head && cd ..
 | `docs/RESILIENCE_INTELLIGENCE_REPORT.md` | ছয়টা নতুন ফিচারের রিপোর্ট, কী যাচাই হয়েছে আর কী হয়নি |
 | `docs/DEMO_SCRIPT.md` | ডেমো রেকর্ড করার স্ক্রিপ্ট |
 | `docs/DEEP_DEBUGGING_REPORT.md` | যে যে বাগ ধরা পড়েছিল ও কীভাবে |
+
+---
+
+## উইন্ডোজ / PowerShell
+
+### কেন আপনার কমান্ডগুলো কাজ করেনি
+
+```
+The token '&&' is not a valid statement separator in this version.
+```
+
+PowerShell **5.1** (Windows 10/11-এ ডিফল্ট) `&&` চেনে না — এটা PowerShell 7+ এর
+জিনিস। আর এটা **parse error**, তাই লাইনটা একেবারেই চলেনি: `.venv` এখনো তৈরি হয়নি।
+পুরো লাইনটা একসাথে ব্যর্থ হয়েছে, প্রথম অংশটা আলাদা করে চালেনি।
+
+**সবচেয়ে সহজ সমাধান** — নিচের এক লাইন:
+
+```powershell
+.\scripts\dev.ps1 setup
+```
+
+এটা venv বানায়, backend আর frontend দুটোরই প্যাকেজ ইনস্টল করে।
+
+এরপর চালু করতে:
+
+```powershell
+.\scripts\dev.ps1
+```
+
+### যদি "running scripts is disabled" আসে
+
+এটা স্ক্রিপ্টের সমস্যা নয়, উইন্ডোজের ডিফল্ট Execution Policy। দুইটা উপায়:
+
+```powershell
+# শুধু এই বার চালাতে
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1
+
+# অথবা একবারের জন্য নিজের ইউজারের অনুমতি দিয়ে দিন (dev মেশিনে স্বাভাবিক)
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+### হাতে করতে চাইলে (স্ক্রিপ্ট ছাড়া)
+
+PowerShell 5.1-এ `&&` এর বদলে **`;`** ব্যবহার করুন — তবে সাবধান: `;` আগের কমান্ড
+ব্যর্থ হলেও পরেরটা চালিয়ে যায়। নিরাপদে করতে একটা একটা করে লাইন দিন:
+
+```powershell
+python -m venv .venv
+
+.\.venv\Scripts\Activate.ps1
+
+pip install -r backend\requirements.txt
+
+cd frontend
+npm install
+cd ..
+
+python backend\run.py
+```
+
+> **`python3` নয়, `python`।** উইন্ডোজে সাধারণত `python3.exe` থাকে না। আর
+> Microsoft Store-এর `python3` stub খুললে দোকান খোলে, Python চলে না।
+>
+> **`.venv\Scripts` — `.venv/bin` নয়।** উইন্ডোজে venv-এর ভেতরের ফোল্ডারের নাম
+> `Scripts`, আর python-এর নাম `python.exe`, `python3` নয়।
+
+### দুইটা টার্মিনালে চালাতে চাইলে
+
+স্ক্রিপ্ট একসাথে দুটোই চালায়। আলাদা করতে চাইলে:
+
+```powershell
+# টার্মিনাল ১
+.\scripts\dev.ps1 api
+
+# টার্মিনাল ২
+.\scripts\dev.ps1 web
+```
+
+তারপর ব্রাউজারে <http://127.0.0.1:3000>।
+
+### উইন্ডোজে যে বাগটা ধরা পড়েছিল
+
+আপনার প্রশ্নের কারণে একটা আসল বাগ পাওয়া গেছে, সেটা ঠিক করা হয়েছে।
+
+`.env.example` কপি করলে `DATABASE_URL` হয় আপেক্ষিক (`sqlite:///./data/...`) — সেটা
+ঠিকই কাজ করে। কিন্তু কেউ যদি **পূর্ণ Windows path** দেয়:
+
+```
+DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.db
+```
+
+তাহলে পুরনো কোড ড্রাইভ লেটার (`C:`) কে "আপেক্ষিক path" ভেবে রিপো রুটের সাথে জোড়া
+দিত, ফলে এমন একটা ফোল্ডার বানাতে চাইত যা তৈরি হয় না। **এখন ঠিক করা হয়েছে**, এবং
+`backend/tests/test_sqlite_paths.py`-এ ৭টা টেস্ট আছে যাতে আবার না হয়।
+
+> তবে গাইডের সবচেয়ে নিরাপদ পরামর্শ: `DATABASE_URL`-এ **আপেক্ষিক path-ই রাখুন**
+> (`sqlite:///./data/symbiotic_city.db`), অথবা `.env` একেবারেই বানাবেন না। ডিফল্ট
+> সবসময় ঠিক থাকে।
+
+### উইন্ডোজে আর যা যা মনে রাখবেন
+
+| বিষয় | উইন্ডোজে |
+| --- | --- |
+| venv python | `.venv\Scripts\python.exe` |
+| venv activate | `.venv\Scripts\Activate.ps1` |
+| ডেটাবেজ রিসেট | `Remove-Item backend\data\symbiotic_city.db` |
+| টেস্ট চালানো | `.venv\Scripts\python.exe -m pytest backend\tests -q` |
+| smoke test | `.venv\Scripts\python.exe scripts\smoke.py` |
+| পোর্ট busy দেখতে | `Get-NetTCPConnection -LocalPort 3000` |
+| সার্ভার বন্ধ করতে | টার্মিনালে `Ctrl + C`, বা `Get-Process node \| Stop-Process` |
+
+> **WSL2 বিকল্প:** যদি PowerShell-এ ঝামেলা মনে হয়, WSL2 (Ubuntu) খুলে উপরের পুরো
+> বাংলা গাইডের bash কমান্ডগুলো হুবহু চালাতে পারেন — Linux-এ যাচাই করা পথ সেটাই।
+> কোড WSL-এর ভেতরে রাখলে `C:\` ড্রাইভেও রাখতে পারবেন (`/mnt/c/...`), তবে ওখানে
+> ফাইল সিস্টেম ধীর, তাই `~/symbiotic-city`-তে রাখাই ভালো।
