@@ -103,6 +103,12 @@ cd frontend && npm install && cd ..
 ./scripts/dev.sh
 ```
 
+**New to the project / setting up a fresh laptop?** Follow
+[docs/LAPTOP_SETUP_BN.md](docs/LAPTOP_SETUP_BN.md) (Bangla) — it was written by
+cloning into an empty directory and running every command in it from scratch.
+[docs/SETUP.md](docs/SETUP.md) is the same ground in English, with the production
+path.
+
 Open <http://127.0.0.1:3000>, sign in with a demo role, and follow
 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for the recording script
 (a shorter walkthrough is in [docs/DEMO.md](docs/DEMO.md)).
