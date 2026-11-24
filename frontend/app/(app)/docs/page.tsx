@@ -3,7 +3,7 @@
 /** In-app methodology and demo script (also summarised in README.md). */
 
 import Link from "next/link";
-import { BookOpen, Bug, Cpu, GitBranch, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpen, Bug, Cpu, GitBranch, ShieldCheck, Sparkles, Target } from "lucide-react";
 import { Badge, PageHeader, Panel, PanelHeader } from "@/components/ui";
 
 const DEMO = [
@@ -46,6 +46,26 @@ const DEMO = [
     title: "8 · Close the loop",
     body: "Engineer accepts and completes tasks; the operator verifies them; resolution is then permitted and the asset returns to operational.",
     href: "/my-tasks",
+  },
+  {
+    title: "9 · See where the city is fragile",
+    body: "Resilience → Exposure. The zone map colours five districts by risk and states the drivers: which asset failed and what its criticality score is. Select a zone to read them.",
+    href: "/resilience",
+  },
+  {
+    title: "10 · Compare two futures",
+    body: "Resilience → What-if futures. Record a reading for two saved hypotheses, then compare. The screen names the failures common to both and the single input change that separates them.",
+    href: "/resilience",
+  },
+  {
+    title: "11 · Price the trade-off",
+    body: "Resilience → Recovery trade-offs. Build the frontier against the run from step 2: several plans, none dominated, ordered by how many sites they restore.",
+    href: "/resilience",
+  },
+  {
+    title: "12 · Decide what to fix",
+    body: "Resilience → Investment plan. Each option is a measured counterfactual, and the recommended package is re-measured as a package — the people counted twice are reported explicitly.",
+    href: "/resilience",
   },
 ];
 
@@ -156,6 +176,44 @@ export default function DocsPage() {
         </Panel>
 
         <Panel>
+          <PanelHeader title="Resilience intelligence" subtitle="Criticality, heatmap, what-if, frontier, investment" icon={<Target className="h-4 w-4" />} />
+          <ol className="space-y-3 text-xs leading-relaxed text-ink-400">
+            <li>
+              <span className="text-ink-100">Criticality.</span> A derived 0–100 index per asset:
+              reach 0.40 · blast radius 0.30 · population 0.20 · single point of failure 0.10. Reach is
+              walked over successors with a 0.5 decay to five hops, so distance from the failure matters.
+              Consequence is measured by running a real cascade from each asset, not estimated.
+            </li>
+            <li>
+              <span className="text-ink-100">Heatmap.</span> Zone risk blends the stored impact of the
+              selected run (0.55) with the derived criticality of assets inside the zone (0.45). Zones
+              without a recorded failure still report exposure and say so; their outline is dashed.
+            </li>
+            <li>
+              <span className="text-ink-100">What-if.</span> Each saved hypothesis stores the reading taken
+              when it was run, so a comparison is not recomputed with a newer engine. Differences are
+              attributed to an input change only when exactly one input differs.
+            </li>
+            <li>
+              <span className="text-ink-100">Frontier.</span> The CP-SAT model is solved once per achievable
+              coverage level, maximising the documented objective subject to a “serve at least this many”
+              constraint. Only non-dominated plans are shown; coverage is a requirement, never a preference.
+            </li>
+            <li>
+              <span className="text-ink-100">Investment.</span> Every option is a counterfactual: the
+              dependency edges are changed and the same cascade is re-run. Costs are annualised planning
+              constants, labelled as such, and the recommended package is measured together rather than
+              summed, because summing overlapping interventions claims more people than were ever at risk.
+            </li>
+          </ol>
+          <p className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[11px] text-ink-400">
+            <span className="text-ink-100">Time travel.</span> Past status is rebuilt from the append-only
+            status history, so it is exact. Everything else the snapshot reports is labelled exact, inferred
+            or not reconstructed — resource stock has never had a history and is not invented.
+          </p>
+        </Panel>
+
+        <Panel>
           <PanelHeader title="Authorisation" subtitle="Backend-enforced, with object-level checks" icon={<ShieldCheck className="h-4 w-4" />} />
           <dl className="space-y-2 text-xs leading-relaxed text-ink-400">
             <div>
@@ -175,7 +233,10 @@ export default function DocsPage() {
             </div>
             <div>
               <dt className="font-semibold text-ink-100">City Analyst</dt>
-              <dd>Simulation, optimisation, analytics and exports. Read-only on operational records.</dd>
+              <dd>
+                Simulation, optimisation, analytics, exports and resilience planning. Read-only on
+                operational records.
+              </dd>
             </div>
           </dl>
           <p className="mt-3 text-[11px] text-ink-500">

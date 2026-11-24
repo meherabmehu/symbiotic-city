@@ -47,6 +47,31 @@ const IMPACT_COLOR: Record<string, string> = {
   affected: "#45d8f5",
 };
 
+/**
+ * A second encoding of status, independent of colour.
+ *
+ * The map used to distinguish operational / degraded / offline by hue alone:
+ * mint against amber against coral. That is unreadable for the ~8% of men with a
+ * red-green deficiency, and it fails the accessibility rule the rest of the
+ * product follows. Each status now also has a mark, drawn on the tower it
+ * belongs to, and the legend shows the same mark beside its swatch.
+ */
+const STATUS_MARK: Record<string, "none" | "half" | "bar" | "cross" | "dot"> = {
+  operational: "none",
+  degraded: "half",
+  offline: "cross",
+  maintenance: "bar",
+  archived: "dot",
+};
+
+const MARK_LABEL: Record<string, string> = {
+  none: "no mark",
+  half: "half-filled",
+  cross: "cross",
+  bar: "bar",
+  dot: "dot",
+};
+
 const CATEGORY_GLYPH: Record<string, React.ComponentType<{ className?: string }>> = {
   power_station: Zap,
   substation: Zap,
@@ -302,6 +327,44 @@ export function CityTwin({
       context.strokeStyle = color;
       context.stroke();
 
+      // status mark: the non-colour encoding of the same fact
+      const statusKey = impact
+        ? impact.impact_level === "failed"
+          ? "offline"
+          : impact.impact_level === "degraded"
+            ? "degraded"
+            : "operational"
+        : node.status;
+      const mark = STATUS_MARK[statusKey] ?? "none";
+      if (mark !== "none") {
+        const mx = point.x;
+        const my = point.y - towerHeight / 2;
+        context.save();
+        context.strokeStyle = "rgba(4,11,24,0.85)";
+        context.fillStyle = "rgba(4,11,24,0.85)";
+        context.lineWidth = 1;
+        if (mark === "cross") {
+          context.beginPath();
+          context.moveTo(mx - 2.2, my - 2.2);
+          context.lineTo(mx + 2.2, my + 2.2);
+          context.moveTo(mx + 2.2, my - 2.2);
+          context.lineTo(mx - 2.2, my + 2.2);
+          context.stroke();
+        } else if (mark === "bar") {
+          context.fillRect(mx - 2.6, my - 0.6, 5.2, 1.2);
+        } else if (mark === "half") {
+          context.beginPath();
+          context.arc(mx, my, 2.2, 0, Math.PI, false);
+          context.closePath();
+          context.fill();
+        } else if (mark === "dot") {
+          context.beginPath();
+          context.arc(mx, my, 1.3, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.restore();
+      }
+
       // incident marker
       if (node.active_incidents > 0) {
         context.beginPath();
@@ -384,13 +447,13 @@ export function CityTwin({
   const resetView = () => setCamera({ x: 0, y: 0, scale: 1 });
 
   const legend = [
-    { label: "Operational", color: STATUS_COLOR.operational },
-    { label: "Degraded", color: STATUS_COLOR.degraded },
-    { label: "Offline", color: STATUS_COLOR.offline },
+    { label: "Operational", color: STATUS_COLOR.operational, mark: STATUS_MARK.operational },
+    { label: "Degraded", color: STATUS_COLOR.degraded, mark: STATUS_MARK.degraded },
+    { label: "Offline", color: STATUS_COLOR.offline, mark: STATUS_MARK.offline },
     ...(impacts.length
       ? [
-          { label: "Simulated failure", color: IMPACT_COLOR.failed },
-          { label: "Simulated impact", color: IMPACT_COLOR.affected },
+          { label: "Simulated failure", color: IMPACT_COLOR.failed, mark: STATUS_MARK.offline },
+          { label: "Simulated impact", color: IMPACT_COLOR.affected, mark: STATUS_MARK.operational },
         ]
       : []),
   ];
@@ -468,10 +531,26 @@ export function CityTwin({
           </Badge>
         </div>
 
-        <div className="absolute bottom-3 left-3 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-navy-950/80 px-3 py-2 backdrop-blur">
+        <div
+          className="absolute bottom-3 left-3 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-navy-950/80 px-3 py-2 backdrop-blur"
+          aria-label="Map legend: colour and mark"
+        >
           {legend.map((item) => (
             <span key={item.label} className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-ink-400">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+              <span
+                className="relative flex h-3 w-3 items-center justify-center"
+                aria-hidden
+                title={MARK_LABEL[item.mark]}
+              >
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+                {item.mark === "cross" ? (
+                  <span className="absolute text-[8px] leading-none text-navy-950">✕</span>
+                ) : item.mark === "bar" ? (
+                  <span className="absolute h-px w-2 bg-navy-950" />
+                ) : item.mark === "half" ? (
+                  <span className="absolute h-2 w-1 self-end rounded-l-full bg-navy-950/80" />
+                ) : null}
+              </span>
               {item.label}
             </span>
           ))}
