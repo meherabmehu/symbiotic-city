@@ -15,7 +15,7 @@
 | `.env` ছাড়া চালু (ডিফল্ট SQLite) | ২৩টা asset, ৫টা zone নিজে থেকে সিড হয়েছে |
 | `./scripts/dev.sh` | API `:8000`, web `:3000` উঠেছে, আসল ডেটা দিয়েছে (PS-02 = 84.3) |
 | `python scripts/smoke.py` | সব চেক পাশ |
-| `./scripts/verify.sh` | **276 passed, 10 skipped**, typecheck ও build পাশ |
+| `./scripts/verify.sh` | **277 passed, 10 skipped**, typecheck ও build পাশ |
 | `alembic upgrade head` | দুটো migration-ই চলেছে, whatif টেবিল তৈরি |
 
 ধরুন আপনি কিছুই ইনস্টল করা নেই এমন একটা ল্যাপটপে বসে আছেন।
@@ -219,11 +219,11 @@ cp .env.example .env
 
 সব লাইনে `PASS` দেখলে বোঝবেন login, সিমুলেশন, অপ্টিমাইজার, ওয়ার্কফ্লো — সব ঠিক।
 
-**পুরো টেস্ট স্যুট** (২৭৬টা টেস্ট, ~২ মিনিট ৩০ সেকেন্ড):
+**পুরো টেস্ট স্যুট** (২৭৭টা টেস্ট, ~২ মিনিট ৩০ সেকেন্ড):
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
-# 276 passed, 10 skipped
+# 277 passed, 10 skipped
 ```
 
 **সব একসাথে** (টেস্ট + typecheck + build):
@@ -243,7 +243,7 @@ cp .env.example .env
 | পোর্ট ৩০০০ বা ৮০০০ busy | আগের কোনো সার্ভার এখনো চলছে | `lsof -i :3000` দিয়ে দেখুন, বা `pkill -f "next dev"` |
 | লগইন পেজে "Cannot reach API" | backend ওঠেনি | `./scripts/dev.sh api` আলাদা টার্মিনালে চালিয়ে লগ দেখুন |
 | ড্যাশবোর্ডে সব শূন্য | ডেটা সিড হয়নি | `.env`-এ `SEED_DEMO_DATA=1` দিন, ডাটাবেজ মুছে আবার চালান |
-| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | `rm backend/data/symbiotic_city.db` — পরের বার চালু হলে নতুন করে সিড হবে |
+| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | `FORCE=1 ./scripts/seed.sh` — নিজে থেকেই সঠিক ফাইলটা মুছে নতুন করে সিড করে। হাতে করতে চাইলে `rm backend/data/symbiotic_city.db*` (`.env`-এ path বদলে থাকলে সেটাই) |
 | `Permission denied: ./scripts/dev.sh` | এক্সিকিউট বিট নেই | `chmod +x scripts/*.sh` |
 | `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০.৯+ দরকার |
 | `npm install` শেষে `1 critical` / `3 vulnerabilities` | পুরনো `package-lock.json` ধরে আছে | আগে `git pull` করুন। তাও এলে `npm audit fix --force` **চালাবেন না** — বরং `frontend` ফোল্ডারে `package-lock.json` মুছে আবার `npm install` (এতে lock নতুন করে তৈরি হবে, `package.json`-এর ভার্সনই মানবে) |
@@ -376,6 +376,31 @@ python backend\run.py
 > **`.venv\Scripts` — `.venv/bin` নয়।** উইন্ডোজে venv-এর ভেতরের ফোল্ডারের নাম
 > `Scripts`, আর python-এর নাম `python.exe`, `python3` নয়।
 
+### ইনস্টল হয়ে গেছে, এখন শুধু চালু করতে চাই
+
+যদি `.venv` আর `frontend\node_modules` দুটোই তৈরি হয়ে গেছে (প্রথমবার `pip install`
+আর `npm install` সফল হয়েছে), তাহলে **আর কিছু ইনস্টল করতে হবে না**। শুধু:
+
+```powershell
+cd C:\path\to\symbiotic-city        # যেখানে README.md আছে
+.\.venv\Scripts\Activate.ps1
+.\scripts\dev.ps1
+```
+
+`dev.ps1 setup` আবার দিলে কিছু ভাঙবে না, তবে সময় নষ্ট হবে — ইনস্টল শেষ হলে
+শুধু `.\scripts\dev.ps1`-ই যথেষ্ট।
+
+অন্য টার্মিনালে (backend চলতে থাকা অবস্থায়) যাচাই করে নিন:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\smoke.py
+```
+
+সব লাইনে `PASS` এলে login, সিমুলেশন, অপ্টিমাইজার, ওয়ার্কফ্লো — সব ঠিক।
+
+তারপর ব্রাউজারে **<http://127.0.0.1:3000>** খুলে `admin@symbiotic.city` /
+`Admin#2026` দিয়ে লগইন করুন।
+
 ### দুইটা টার্মিনালে চালাতে চাইলে
 
 স্ক্রিপ্ট একসাথে দুটোই চালায়। আলাদা করতে চাইলে:
@@ -394,8 +419,9 @@ python backend\run.py
 
 আপনার প্রশ্নের কারণে একটা আসল বাগ পাওয়া গেছে, সেটা ঠিক করা হয়েছে।
 
-`.env.example` কপি করলে `DATABASE_URL` হয় আপেক্ষিক (`sqlite:///./data/...`) — সেটা
-ঠিকই কাজ করে। কিন্তু কেউ যদি **পূর্ণ Windows path** দেয়:
+`.env.example` কপি করলে `DATABASE_URL` হয় আপেক্ষিক (`sqlite:///backend/data/...`) — সেটা
+ঠিকই কাজ করে, কারণ আপেক্ষিক path রিপো রুটের সাপেক্ষে ধরা হয়। কিন্তু কেউ যদি
+**পূর্ণ Windows path** দেয়:
 
 ```
 DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.db
@@ -406,8 +432,14 @@ DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.
 `backend/tests/test_sqlite_paths.py`-এ ৭টা টেস্ট আছে যাতে আবার না হয়।
 
 > তবে গাইডের সবচেয়ে নিরাপদ পরামর্শ: `DATABASE_URL`-এ **আপেক্ষিক path-ই রাখুন**
-> (`sqlite:///./data/symbiotic_city.db`), অথবা `.env` একেবারেই বানাবেন না। ডিফল্ট
-> সবসময় ঠিক থাকে।
+> (`sqlite:///backend/data/symbiotic_city.db`), অথবা `.env` একেবারেই বানাবেন না।
+> ডিফল্ট সবসময় ঠিক থাকে।
+>
+> **`.env` বানানোর আগে-পরে ডেটা হারাবেন না।** আগে `.env` ছাড়া চালালে ডেটাবেজ তৈরি হয়
+> `backend\data\symbiotic_city.db`-তে। পরে `.env` বানিয়ে তাতে অন্য path দিলে অ্যাপ
+> সেটাকেই ব্যবহার করবে — পুরনো ফাইলটা রয়ে যাবে, কিন্তু খালি ডেটাবেজ দেখে মনে হবে
+> সব মুছে গেছে। তাই `.env` বানানোর আগে-পরে path একই রাখুন (এখন `.env.example`-এর
+> ডিফল্টও `backend/data/...`, তাই কপি করলে কিছু বদলায় না)।
 
 ### উইন্ডোজে আর যা যা মনে রাখবেন
 
@@ -415,7 +447,7 @@ DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.
 | --- | --- |
 | venv python | `.venv\Scripts\python.exe` |
 | venv activate | `.venv\Scripts\Activate.ps1` |
-| ডেটাবেজ রিসেট | `Remove-Item backend\data\symbiotic_city.db` |
+| ডেটাবেজ রিসেট | `Remove-Item backend\data\symbiotic_city.db*` (path বদলে থাকলে `.env`-এ যা লেখা আছে সেটাই মুছুন) |
 | টেস্ট চালানো | `.venv\Scripts\python.exe -m pytest backend\tests -q` |
 | smoke test | `.venv\Scripts\python.exe scripts\smoke.py` |
 | পোর্ট busy দেখতে | `Get-NetTCPConnection -LocalPort 3000` |
