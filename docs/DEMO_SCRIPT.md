@@ -1,8 +1,15 @@
 # Demo script — SYMBIOTIC CITY
 
-**Target length:** 8–10 minutes. **Format:** screen recording with voice-over,
-1080p or better, browser at 1440×900 for the desktop segments and a resized
-window for the mobile segment.
+**Target length:** 8–10 minutes for the submission cut. **Format:** screen
+recording with voice-over, 1080p or better, browser at 1440×900 for the desktop
+segments and a resized window for the mobile segment.
+
+The eleven segments below total about 16 minutes if all are recorded. Two cuts are
+honest options: the **submission cut** (segments 0–3, 5, 8, 9, 10 — roughly 9
+minutes) keeps the thesis, one cascade, the honest failure and the two resilience
+segments that carry the new argument; the **full walkthrough** records everything
+and is linked separately. Do not describe a cut as complete if it omits segments 6
+and 7, which are where the system admits its limits.
 
 Every number in this script comes from the seeded dataset and is served by the
 real API. Nothing is mocked, hard-coded for the camera, or faked in post. If the
@@ -198,7 +205,37 @@ every one is covered by an automated test."*
 
 ---
 
-## 8 · Close the loop (45 s)
+## 8 · Where the city is fragile (60 s) — Resilience
+
+**Do:** `/resilience` → **Exposure**. Point at the zone map, select the highest
+zone, then read the drivers and the ranked assets. Note that the three hospitals
+sit at the bottom of the ranking with a score of 0.
+
+**Say:** *"This is measured, not asserted. The substation scores 84 because losing
+it fails seventeen assets and takes the hospital, the telecom link and the water
+pump with it. The hospitals score zero — they are the most important things in the
+city and the least consequential to lose, because nothing depends on them. The
+hand-assigned criticality number said the opposite."*
+
+---
+
+## 9 · Price the trade-off (75 s) — the hard question
+
+**Do:** **Recovery trade-offs** → choose the run from segment 3 → **Build
+frontier**. Point at the plan cards, then at the notes underneath. Then
+**Investment plan**, budget 150,000, and read the "Not claimed" figure.
+
+**Say:** *"Three plans, none dominated — twelve sites, ten, or eight. Which is right
+depends on what the city is prepared to spend, so it is presented as a choice
+rather than decided for you. Down here: every option was applied to the real graph
+and the cascade re-run, so the benefit is measured. And the recommended package is
+measured as a package — adding the individual benefits would have claimed 141,500
+people protected when only 85,300 were ever at risk. The difference is reported,
+not rounded away."*
+
+---
+
+## 10 · Close the loop (45 s)
 
 **Do:** `/analytics` → recovery performance and resource utilisation → **Export
 CSV**. Then, as admin, `/admin/audit`.

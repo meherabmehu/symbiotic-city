@@ -82,7 +82,8 @@ Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/API.md](docs/
 | --- | --- |
 | [docs/COMPETITION_MATRIX.md](docs/COMPETITION_MATRIX.md) | Every M01–M08 and A02/A07 claim mapped to the evidence that proves it |
 | [docs/FINAL_PRODUCTION_AUDIT.md](docs/FINAL_PRODUCTION_AUDIT.md) | What was verified, what was not, and the eight defects found |
-| [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | The 8–10 minute recording script and checklist |
+| [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | The recording script, its two cuts, and the checklist |
+| [docs/RESILIENCE_INTELLIGENCE_REPORT.md](docs/RESILIENCE_INTELLIGENCE_REPORT.md) | The six resilience features: what was measured, what was not verified |
 | [docs/SUBMISSION.md](docs/SUBMISSION.md) | S01/S02/S03 status, stated without inflation |
 
 Each claim is marked **Verified**, **Partially verified**, **Not verified**,
