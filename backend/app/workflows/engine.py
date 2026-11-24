@@ -593,9 +593,15 @@ def advance_workflow(
 def retry_workflow(
     db: Session, workflow: WorkflowInstance, *, actor_id: int | None
 ) -> WorkflowInstance:
-    if workflow.status not in ("failed", "running", "awaiting_field", "awaiting_approval"):
+    # Retry exists to resume a workflow that stopped on a failure: the console
+    # only offers it when status == "failed". Accepting a healthy workflow here
+    # let a caller take one that was waiting for plan approval, flip it to
+    # "running" and bump retry_count, which is a state corruption rather than a
+    # retry -- the workflow then sits "running" with no agent to advance it.
+    if workflow.status != "failed":
         raise ApiError(
-            f"Workflow is {workflow.status} and cannot be retried.",
+            f"Workflow is {workflow.status} and cannot be retried. Only a failed "
+            "workflow can be retried.",
             status_code=409,
             code="invalid_state",
         )

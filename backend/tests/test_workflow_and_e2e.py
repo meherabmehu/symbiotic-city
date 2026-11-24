@@ -420,3 +420,77 @@ def test_scarce_generator_allocation_prefers_the_hospital(client, as_role):
     assert "HO-01" in served, "the hospital must win the scarce generator"
     assert plan["coverage_percent"] <= 100
     assert plan["explanation"]["unserved"] or len(served) == 3
+
+
+# --------------------------------------------------------------------------- #
+# Retry is a recovery action, not a no-op that rewrites a healthy workflow.
+# --------------------------------------------------------------------------- #
+
+
+def test_retry_is_refused_for_a_workflow_that_did_not_fail(as_role):
+    """A workflow waiting for approval must not be flipped to "running".
+
+    retry_workflow used to accept any status in (failed, running, awaiting_field,
+    awaiting_approval). Called on a healthy workflow it returned 200, set
+    status="running" and incremented retry_count, leaving a workflow that no
+    actor would ever advance because the operator was about to approve it. The
+    console only offers Retry when status is "failed", so nothing depended on the
+    permissive behaviour.
+    """
+    operator = as_role("city_operator")
+    assets = operator.get("/api/infrastructure?page_size=100").json()["data"]
+    substation = next(a for a in assets if a["category"] == "substation")
+    incident = operator.post(
+        "/api/incidents",
+        json={
+            "title": "Retry must not touch a healthy workflow",
+            "description": "regression probe",
+            "primary_asset_id": substation["id"],
+            "category": f"retry_guard_{uuid.uuid4().hex[:8]}",
+            "severity": "high",
+        },
+    ).json()["data"]
+    started = operator.post(f"/api/workflows/start?incident_id={incident['id']}")
+    assert started.status_code == 201, started.text
+    workflow = started.json()["data"]
+    assert workflow["status"] != "failed"
+
+    attempt = operator.post(f"/api/workflows/{workflow['id']}/retry")
+    assert attempt.status_code == 409, (
+        f"retrying a {workflow['status']} workflow returned {attempt.status_code}"
+    )
+    assert attempt.json()["error"]["code"] == "invalid_state"
+
+    unchanged = operator.get(f"/api/workflows/{workflow['id']}").json()["data"]
+    assert unchanged["status"] == workflow["status"], "the refused retry still changed the status"
+    assert unchanged["retry_count"] == workflow["retry_count"], "the refused retry was counted"
+
+
+def test_retry_still_resumes_a_genuinely_failed_workflow(as_role):
+    """The legitimate path must keep working: fail at a step, then retry."""
+    operator = as_role("city_operator")
+    assets = operator.get("/api/infrastructure?page_size=100").json()["data"]
+    substation = next(a for a in assets if a["category"] == "substation")
+    incident = operator.post(
+        "/api/incidents",
+        json={
+            "title": "Retry must resume a failed workflow",
+            "description": "positive control",
+            "primary_asset_id": substation["id"],
+            "category": f"retry_resume_{uuid.uuid4().hex[:8]}",
+            "severity": "high",
+        },
+    ).json()["data"]
+    operator.post(
+        f"/api/workflows/start?incident_id={incident['id']}&fail_at_step=recovery_plan_generated"
+    )
+    failed = operator.get(f"/api/workflows?incident_id={incident['id']}").json()["data"][0]
+    assert failed["status"] == "failed"
+    before = set(failed["completed_steps"])
+
+    retried = operator.post(f"/api/workflows/{failed['id']}/retry")
+    assert retried.status_code == 200, retried.text
+    after = retried.json()["data"]
+    assert after["status"] != "failed", "the retry did not move the workflow past its failure"
+    assert after["retry_count"] == failed["retry_count"] + 1
+    assert before.issubset(set(after["completed_steps"])), "the retry lost completed work"
