@@ -80,3 +80,63 @@ class SimulationResult(Base):
     explanation: Mapped[str] = mapped_column(String(400), default="", nullable=False)
 
     run: Mapped[SimulationRun] = relationship(back_populates="results")
+
+
+class WhatIfScenario(Base):
+    """A saved what-if: a named failure hypothesis with its run history.
+
+    ``SimulationScenario`` holds the reusable template (where the failure starts,
+    at what threshold). This holds an *investigation*: a question the city asked,
+    the runs that answered it, and the notes that explain what changed between
+    them. Keeping them apart matters because a template is edited, whereas a
+    recorded investigation must stay exactly as it was when it was interpreted.
+    """
+
+    __tablename__ = "whatif_scenarios"
+    __table_args__ = (UniqueConstraint("code", name="uq_whatif_code"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(30), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # the hypothesis: which assets fail, under what model parameters
+    initial_failure_ids_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    failure_mode: Mapped[str] = mapped_column(String(40), default="total_failure", nullable=False)
+    cascade_threshold: Mapped[float] = mapped_column(Float, default=0.35, nullable=False)
+    max_depth: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
+    random_seed: Mapped[int] = mapped_column(Integer, default=42, nullable=False)
+    # ordering hint for the comparison view
+    is_baseline: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class WhatIfObservation(Base):
+    """One recorded run against a what-if, with the reading taken from it.
+
+    The metrics are copied, not recomputed. A comparison that re-derives numbers
+    from a run months later is a comparison of today's engine against yesterday's
+    decision; storing the reading keeps the record honest.
+    """
+
+    __tablename__ = "whatif_observations"
+    __table_args__ = (Index("ix_whatif_observation_scenario", "scenario_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scenario_id: Mapped[int] = mapped_column(
+        ForeignKey("whatif_scenarios.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_runs.id", ondelete="SET NULL")
+    )
+    headline: Mapped[str] = mapped_column(String(240), default="", nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    scenario: Mapped[WhatIfScenario] = relationship()
+    run: Mapped[SimulationRun | None] = relationship()

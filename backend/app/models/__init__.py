@@ -30,7 +30,13 @@ from app.models.operations import (  # noqa: F401
     TaskStatus,
     TaskStatusHistory,
 )
-from app.models.simulation import SimulationResult, SimulationRun, SimulationScenario  # noqa: F401
+from app.models.simulation import (  # noqa: F401
+    SimulationResult,
+    SimulationRun,
+    SimulationScenario,
+    WhatIfObservation,
+    WhatIfScenario,
+)
 from app.models.optimization import (  # noqa: F401
     OptimizationAssignment,
     OptimizationPlan,
