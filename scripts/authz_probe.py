@@ -82,6 +82,8 @@ GET_PATHS = [
     "/resilience/heatmap",
     "/resilience/whatif",
     "/resilience/whatif/compare?ids=1&ids=2",
+    "/resilience/timetravel",
+    "/resilience/timetravel/snapshot",
 ]
 
 MUTATIONS = [

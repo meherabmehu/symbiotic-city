@@ -283,3 +283,71 @@ def recovery_frontier(
             ],
         }
     )
+
+
+# --------------------------------------------------------------------------- #
+# Time-travel replay
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/resilience/timetravel",
+    dependencies=[Depends(require_permissions("resilience:read"))],
+)
+def timetravel_replay(
+    db: DbSession,
+    user: CurrentUser,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = Query(default=120, ge=1, le=400),
+):
+    """Step through recorded history in a window, and the city at its end."""
+    from app.services import time_travel
+
+    return ok(
+        time_travel.replay(
+            db,
+            since=time_travel.parse_moment(since, field="since"),
+            until=time_travel.parse_moment(until, field="until"),
+            limit=limit,
+        )
+    )
+
+
+@router.get(
+    "/resilience/timetravel/snapshot",
+    dependencies=[Depends(require_permissions("resilience:read"))],
+)
+def timetravel_snapshot(
+    db: DbSession,
+    user: CurrentUser,
+    at: str | None = None,
+):
+    """The city as it was at one moment, with the evidence for every status."""
+    from app.core.types import utcnow
+    from app.services import time_travel
+
+    moment = time_travel.parse_moment(at, field="at") or utcnow()
+    return ok(time_travel.snapshot(db, moment))
+
+
+@router.get(
+    "/resilience/timetravel/diff",
+    dependencies=[Depends(require_permissions("resilience:read"))],
+)
+def timetravel_diff(
+    db: DbSession,
+    user: CurrentUser,
+    first: str = Query(..., description="ISO-8601 start of the interval"),
+    second: str = Query(..., description="ISO-8601 end of the interval"),
+):
+    """What got worse and what got better between two moments."""
+    from app.services import time_travel
+
+    return ok(
+        time_travel.compare_moments(
+            db,
+            time_travel.parse_moment(first, field="first"),
+            time_travel.parse_moment(second, field="second"),
+        )
+    )
