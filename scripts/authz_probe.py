@@ -19,6 +19,11 @@ import urllib.request
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8081/api").rstrip("/")
 
+# Routes that are public by design. /system/health is the liveness probe and
+# /auth/roles supplies the role list the registration form must render before the
+# visitor has a session. Anything else answering an anonymous caller is a leak.
+PUBLIC_BY_DESIGN = {"/system/health", "/auth/roles"}
+
 ROLES = {
     "anon": None,
     "admin": {"email": "admin@symbiotic.city", "password": "Admin#2026"},
@@ -143,7 +148,7 @@ def main() -> int:
         for name, (opener, jar) in openers.items():
             code = call(opener, jar, "GET", path)
             row += f"{code:>9d}"
-            if name == "anon" and 200 <= code < 300 and path not in ("/system/health",):
+            if name == "anon" and 200 <= code < 300 and path not in PUBLIC_BY_DESIGN:
                 leaks.append(f"anonymous GET {path} -> {code}")
         print(row)
 
@@ -153,7 +158,7 @@ def main() -> int:
         for name, (opener, jar) in openers.items():
             code = call(opener, jar, method, path, body)
             row += f"{code:>9d}"
-            if name == "anon" and 200 <= code < 300:
+            if name == "anon" and 200 <= code < 300 and path not in PUBLIC_BY_DESIGN:
                 leaks.append(f"anonymous {method} {path} -> {code}")
         print(row)
 
