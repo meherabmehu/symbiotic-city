@@ -121,3 +121,25 @@ class SimulationRunDetail(SimulationRunOut):
 class SimulationComparison(BaseModel):
     runs: list[SimulationRunOut]
     metrics: list[dict]
+
+
+class WhatIfScenarioCreate(BaseModel):
+    """A named failure hypothesis to keep and compare later."""
+
+    name: str = Field(min_length=3, max_length=200)
+    description: str = Field(default="", max_length=1000)
+    initial_failure_ids: list[int] = Field(min_length=1, max_length=10)
+    failure_mode: Literal["total_failure", "capacity_loss", "maintenance"] = "total_failure"
+    cascade_threshold: float = Field(default=0.35, ge=0.05, le=1.0)
+    max_depth: int = Field(default=6, ge=1, le=12)
+    random_seed: int = Field(default=42, ge=0, le=2**31 - 1)
+    is_baseline: bool = False
+
+    @field_validator("initial_failure_ids")
+    @classmethod
+    def _unique(cls, v: list[int]) -> list[int]:
+        return list(dict.fromkeys(v))
+
+
+class WhatIfObserveRequest(BaseModel):
+    note: str = Field(default="", max_length=1000)

@@ -8,11 +8,14 @@ and simulation history into a decision an operator can defend.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+import json
+
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import CurrentUser, DbSession, require_permissions
-from app.core.responses import ok
+from app.core.responses import ApiError, ok
 from app.core.types import utcnow
+from app.schemas.simulation import WhatIfObserveRequest, WhatIfScenarioCreate
 from app.services import criticality as criticality_service
 
 router = APIRouter(tags=["resilience"])
@@ -77,3 +80,149 @@ def get_heatmap(
     )
     data["generated_at"] = utcnow()
     return ok(data)
+
+
+# --------------------------------------------------------------------------- #
+# What-if future simulator
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/resilience/whatif",
+    dependencies=[Depends(require_permissions("resilience:read"))],
+)
+def list_whatifs(db: DbSession, user: CurrentUser):
+    """Every saved what-if, newest reading first, with its recorded readings."""
+    from app.services import whatif as whatif_service
+
+    scenarios = whatif_service.list_scenarios(db)
+    return ok(
+        [
+            whatif_service.scenario_dict(db, scenario)
+            for scenario in scenarios
+        ]
+    )
+
+
+@router.post(
+    "/resilience/whatif",
+    status_code=201,
+    dependencies=[Depends(require_permissions("resilience:plan"))],
+)
+def create_whatif(
+    payload: WhatIfScenarioCreate,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Save a failure hypothesis so it can be run and compared later."""
+    from app.services import audit
+    from app.services import whatif as whatif_service
+
+    scenario = whatif_service.create_scenario(
+        db,
+        name=payload.name,
+        description=payload.description,
+        initial_failure_ids=payload.initial_failure_ids,
+        failure_mode=payload.failure_mode,
+        cascade_threshold=payload.cascade_threshold,
+        max_depth=payload.max_depth,
+        random_seed=payload.random_seed,
+        is_baseline=payload.is_baseline,
+        actor_id=user.id,
+    )
+    audit.record(
+        db,
+        action="whatif.create",
+        actor=user,
+        resource_type="whatif_scenario",
+        resource_id=scenario.id,
+        message=f"{scenario.code} saved: {scenario.name}",
+        metadata={"assets": payload.initial_failure_ids},
+        request=request,
+    )
+    db.commit()
+    return ok(whatif_service.scenario_dict(db, scenario))
+
+
+@router.delete(
+    "/resilience/whatif/{scenario_id}",
+    dependencies=[Depends(require_permissions("resilience:plan"))],
+)
+def delete_whatif(scenario_id: int, request: Request, db: DbSession, user: CurrentUser):
+    from app.models.simulation import WhatIfScenario
+    from app.services import audit
+
+    scenario = db.get(WhatIfScenario, scenario_id)
+    if scenario is None:
+        raise ApiError("Scenario not found.", status_code=404, code="not_found")
+    code = scenario.code
+    db.delete(scenario)
+    audit.record(
+        db,
+        action="whatif.delete",
+        actor=user,
+        resource_type="whatif_scenario",
+        resource_id=scenario_id,
+        message=f"{code} deleted",
+        request=request,
+    )
+    db.commit()
+    return ok({"deleted": scenario_id})
+
+
+@router.post(
+    "/resilience/whatif/{scenario_id}/observe",
+    status_code=201,
+    dependencies=[Depends(require_permissions("resilience:plan"))],
+)
+def observe_whatif(
+    scenario_id: int,
+    payload: WhatIfObserveRequest,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Run the scenario for real and record the reading taken from that run."""
+    from app.models.simulation import WhatIfScenario
+    from app.services import audit
+    from app.services import whatif as whatif_service
+
+    scenario = db.get(WhatIfScenario, scenario_id)
+    if scenario is None:
+        raise ApiError("Scenario not found.", status_code=404, code="not_found")
+    observation = whatif_service.observe(db, scenario, note=payload.note, actor_id=user.id)
+    audit.record(
+        db,
+        action="whatif.observe",
+        actor=user,
+        resource_type="whatif_scenario",
+        resource_id=scenario.id,
+        message=f"{scenario.code} recorded: {observation.headline}",
+        metadata={"run_id": observation.run_id},
+        request=request,
+    )
+    db.commit()
+    return ok(
+        {
+            "observation_id": observation.id,
+            "run_id": observation.run_id,
+            "headline": observation.headline,
+            "metrics": json.loads(observation.metrics_json or "{}"),
+        }
+    )
+
+
+@router.get(
+    "/resilience/whatif/compare",
+    dependencies=[Depends(require_permissions("resilience:read"))],
+)
+def compare_whatifs(
+    db: DbSession,
+    user: CurrentUser,
+    ids: list[int] = Query(..., min_length=2, max_length=4),
+):
+    """Compare saved scenarios and say what separates them."""
+    from app.services import whatif as whatif_service
+
+    return ok(whatif_service.compare(db, ids))
