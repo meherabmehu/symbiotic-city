@@ -21,13 +21,19 @@ const config: Config = {
           600: "#173a68",
           500: "#1e4a80",
         },
+        // Body text scale, darkest last. Tuned so every step clears WCAG AA
+        // (4.5:1) against the darkest surface it is used on, including a glass
+        // panel composited over navy-950 with a 10% white raised row. The old
+        // tail (#6b8fb3 / #4d6d8f) reached only 3.04:1 and 2.62:1 there, while
+        // being used for 10-11px labels that cannot rely on the large-text
+        // allowance. See docs/DEEP_DEBUGGING_REPORT.md, accessibility section.
         ink: {
           50: "#f2f7fc",
           100: "#dce9f6",
-          200: "#b9d2ea",
-          300: "#8fb3d4",
-          400: "#6b8fb3",
-          500: "#4d6d8f",
+          200: "#c3d8ee",
+          300: "#a4c2de",
+          400: "#8cafd0",
+          500: "#7699ba",
         },
         accent: {
           DEFAULT: "#45d8f5",

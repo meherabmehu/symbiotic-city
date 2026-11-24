@@ -27,17 +27,20 @@ import {
   YAxis,
 } from "recharts";
 
-const AXIS = { stroke: "#4d6d8f", fontSize: 10 };
+// Axis ticks are 9-10px, so they get no large-text allowance: these are the
+// AA-clearing ink-300/ink-500 values from tailwind.config.ts, not the old
+// #4d6d8f (2.6:1 on a raised glass row) and #8fb3d4.
+const AXIS = { stroke: "#7699ba", fontSize: 10 };
 const GRID = "#12314d";
 const TOOLTIP = {
   contentStyle: {
     background: "rgba(6,18,37,0.96)",
-    border: "1px solid rgba(143,179,212,0.2)",
+    border: "1px solid rgba(164,194,222,0.2)",
     borderRadius: 12,
     fontSize: 12,
     color: "#f2f7fc",
   },
-  labelStyle: { color: "#8fb3d4", fontSize: 11, marginBottom: 4 },
+  labelStyle: { color: "#a4c2de", fontSize: 11, marginBottom: 4 },
   itemStyle: { color: "#f2f7fc" },
 };
 
@@ -71,7 +74,7 @@ export function TrendAreaChart({
             <XAxis dataKey="date" tick={{ ...AXIS }} tickLine={false} axisLine={false} />
             <YAxis tick={{ ...AXIS }} tickLine={false} axisLine={false} allowDecimals={false} />
             <Tooltip {...TOOLTIP} />
-            <Legend wrapperStyle={{ fontSize: 11, color: "#8fb3d4" }} />
+            <Legend wrapperStyle={{ fontSize: 11, color: "#a4c2de" }} />
             {series.map((item) => (
               <Area
                 key={item.key}
@@ -115,7 +118,7 @@ export function ComparisonBarChart({
             <XAxis dataKey={xKey} tick={{ ...AXIS }} tickLine={false} axisLine={false} interval={0} />
             <YAxis tick={{ ...AXIS }} tickLine={false} axisLine={false} />
             <Tooltip {...TOOLTIP} cursor={{ fill: "rgba(69,216,245,0.06)" }} />
-            <Legend wrapperStyle={{ fontSize: 11, color: "#8fb3d4" }} />
+            <Legend wrapperStyle={{ fontSize: 11, color: "#a4c2de" }} />
             {bars.map((bar) => (
               <Bar
                 key={bar.key}
@@ -157,7 +160,7 @@ export function LineTrend({
             <XAxis dataKey={xKey} tick={{ ...AXIS }} tickLine={false} axisLine={false} />
             <YAxis tick={{ ...AXIS }} tickLine={false} axisLine={false} />
             <Tooltip {...TOOLTIP} />
-            <Legend wrapperStyle={{ fontSize: 11, color: "#8fb3d4" }} />
+            <Legend wrapperStyle={{ fontSize: 11, color: "#a4c2de" }} />
             {series.map((item) => (
               <Line
                 key={item.key}
@@ -241,7 +244,7 @@ export function CoverageRadar({
         <ResponsiveContainer width="100%" height="100%">
           <RadarChart data={data} outerRadius="72%">
             <PolarGrid stroke={GRID} />
-            <PolarAngleAxis dataKey="subject" tick={{ fill: "#8fb3d4", fontSize: 9 }} />
+            <PolarAngleAxis dataKey="subject" tick={{ fill: "#a4c2de", fontSize: 9 }} />
             <Radar dataKey="value" stroke="#45d8f5" fill="#45d8f5" fillOpacity={0.22} />
             <Tooltip {...TOOLTIP} />
           </RadarChart>
