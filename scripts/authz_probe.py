@@ -84,6 +84,7 @@ GET_PATHS = [
     "/resilience/whatif/compare?ids=1&ids=2",
     "/resilience/timetravel",
     "/resilience/timetravel/snapshot",
+    "/resilience/investment",
 ]
 
 MUTATIONS = [

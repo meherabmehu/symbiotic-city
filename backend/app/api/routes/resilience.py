@@ -351,3 +351,38 @@ def timetravel_diff(
             time_travel.parse_moment(second, field="second"),
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# Resilience investment planning
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/resilience/investment",
+    dependencies=[Depends(require_permissions("resilience:plan"))],
+)
+def investment_plan(
+    db: DbSession,
+    user: CurrentUser,
+    objective: str = Query(default="balanced", pattern="^(balanced|population|assets|critical)$"),
+    budget: float | None = Query(default=None, ge=0),
+    types: list[str] | None = Query(default=None),
+    trigger_asset_ids: list[int] | None = Query(default=None),
+):
+    """Rank resilience investments by measured benefit, optionally under a budget.
+
+    Behind ``resilience:plan``: it costs a cascade per candidate and its output is
+    a spending recommendation, so it belongs with the people who can spend.
+    """
+    from app.services import investment as investment_service
+
+    return ok(
+        investment_service.plan(
+            db,
+            objective=objective,
+            budget=budget,
+            intervention_types=tuple(types) if types else investment_service.INTERVENTION_TYPES,
+            trigger_asset_ids=trigger_asset_ids,
+        )
+    )
