@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.api.deps import CurrentUser, DbSession, Pagination, require_permissions
+from app.api.deps import (
+    CurrentUser,
+    DbSession,
+    Pagination,
+    require_any_permission,
+    require_permissions,
+)
 from app.core.responses import ApiError, ok, paginated
 from app.models.identity import Role, User
 from app.models.operations import TaskStatus
@@ -14,7 +20,10 @@ from app.services import tasks as service
 router = APIRouter(tags=["tasks"])
 
 
-@router.get("/tasks")
+@router.get(
+    "/tasks",
+    dependencies=[Depends(require_permissions("task:read"))],
+)
 def list_tasks(
     db: DbSession,
     user: CurrentUser,
@@ -55,7 +64,10 @@ def list_tasks(
     )
 
 
-@router.get("/tasks/engineers")
+@router.get(
+    "/tasks/engineers",
+    dependencies=[Depends(require_permissions("task:read"))],
+)
 def list_engineers(db: DbSession, user: CurrentUser):
     rows = db.scalars(select_users(db).join(User.roles).where(Role.key == "field_engineer")).unique().all()
     return ok(
@@ -78,7 +90,10 @@ def select_users(db):
     return select(User)
 
 
-@router.get("/tasks/my-queue")
+@router.get(
+    "/tasks/my-queue",
+    dependencies=[Depends(require_permissions("task:execute"))],
+)
 def my_queue(db: DbSession, user: CurrentUser):
     if "task:execute" not in user.permission_keys:
         raise ApiError(
@@ -112,7 +127,10 @@ def create_task(payload: TaskCreate, request: Request, db: DbSession, user: Curr
     return ok(service.task_to_dict(db, task, detail=True))
 
 
-@router.get("/tasks/{task_id}")
+@router.get(
+    "/tasks/{task_id}",
+    dependencies=[Depends(require_permissions("task:read"))],
+)
 def get_task(task_id: int, db: DbSession, user: CurrentUser):
     task = service.get_task(db, task_id)
     service.assert_task_access(task, user)
@@ -131,7 +149,15 @@ def assign_task(task_id: int, payload: TaskAssign, request: Request, db: DbSessi
     return ok(service.task_to_dict(db, task, detail=True))
 
 
-@router.post("/tasks/{task_id}/transition")
+# One endpoint serves two roles by design: an engineer accepts, starts and
+# completes (task:execute), an operator verifies (task:verify). The route gate is
+# the union; the service layer then enforces the permission for the specific
+# target state. Gating this on task:execute alone locked operators out of
+# verification.
+@router.post(
+    "/tasks/{task_id}/transition",
+    dependencies=[Depends(require_any_permission("task:execute", "task:verify"))],
+)
 def transition_task(
     task_id: int, payload: TaskTransition, request: Request, db: DbSession, user: CurrentUser
 ):

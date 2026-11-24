@@ -16,12 +16,18 @@ from app.services import audit
 router = APIRouter(tags=["workflows"])
 
 
-@router.get("/workflows/steps")
+@router.get(
+    "/workflows/steps",
+    dependencies=[Depends(require_permissions("workflow:read"))],
+)
 def steps():
     return ok([{"key": k, "label": v, "automatic": k in engine.AUTOMATIC_STEPS} for k, v in STEPS])
 
 
-@router.get("/workflows")
+@router.get(
+    "/workflows",
+    dependencies=[Depends(require_permissions("workflow:read"))],
+)
 def list_workflows(
     db: DbSession,
     user: CurrentUser,
@@ -129,7 +135,10 @@ def start_workflow(
     return ok(engine.workflow_to_dict(db, workflow, detail=True))
 
 
-@router.get("/workflows/{workflow_id}")
+@router.get(
+    "/workflows/{workflow_id}",
+    dependencies=[Depends(require_permissions("workflow:read"))],
+)
 def get_workflow(workflow_id: int, db: DbSession, user: CurrentUser):
     workflow = db.get(WorkflowInstance, workflow_id)
     if workflow is None:

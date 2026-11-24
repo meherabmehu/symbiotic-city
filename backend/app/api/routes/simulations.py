@@ -22,12 +22,18 @@ from app.simulation.engine import ASSUMPTIONS
 router = APIRouter(tags=["simulation"])
 
 
-@router.get("/simulations/assumptions")
+@router.get(
+    "/simulations/assumptions",
+    dependencies=[Depends(require_permissions("simulation:read"))],
+)
 def assumptions():
     return ok({"assumptions": ASSUMPTIONS})
 
 
-@router.get("/scenarios")
+@router.get(
+    "/scenarios",
+    dependencies=[Depends(require_permissions("simulation:read"))],
+)
 def list_scenarios(db: DbSession, user: CurrentUser):
     rows = db.scalars(select(SimulationScenario).order_by(SimulationScenario.created_at.desc())).all()
     return ok([_scenario_dict(s) for s in rows])
@@ -60,7 +66,10 @@ def create_scenario(payload: ScenarioCreate, request: Request, db: DbSession, us
     return ok(_scenario_dict(scenario))
 
 
-@router.get("/simulations")
+@router.get(
+    "/simulations",
+    dependencies=[Depends(require_permissions("simulation:read"))],
+)
 def list_runs(
     db: DbSession,
     user: CurrentUser,
@@ -125,7 +134,10 @@ def run_simulation(payload: SimulationRunRequest, request: Request, db: DbSessio
     return ok(service.run_to_dict(db, run))
 
 
-@router.get("/simulations/{run_id}")
+@router.get(
+    "/simulations/{run_id}",
+    dependencies=[Depends(require_permissions("simulation:read"))],
+)
 def get_run(run_id: int, db: DbSession, user: CurrentUser):
     run = db.get(SimulationRun, run_id)
     if run is None:
@@ -133,14 +145,20 @@ def get_run(run_id: int, db: DbSession, user: CurrentUser):
     return ok(service.run_to_dict(db, run))
 
 
-@router.get("/simulations/{run_id}/demands")
+@router.get(
+    "/simulations/{run_id}/demands",
+    dependencies=[Depends(require_permissions("simulation:read"))],
+)
 def run_demands(run_id: int, db: DbSession, user: CurrentUser):
     from app.services import optimization as optimization_service
 
     return ok(optimization_service.demands_from_simulation(db, run_id))
 
 
-@router.get("/simulations/compare/selected")
+@router.get(
+    "/simulations/compare/selected",
+    dependencies=[Depends(require_permissions("simulation:read"))],
+)
 def compare(
     db: DbSession,
     user: CurrentUser,

@@ -33,7 +33,10 @@ from app.services.infrastructure import ACTIVE_INCIDENT_STATES
 router = APIRouter(tags=["infrastructure"])
 
 
-@router.get("/infrastructure/categories")
+@router.get(
+    "/infrastructure/categories",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def categories():
     return ok(
         [
@@ -43,12 +46,18 @@ def categories():
     )
 
 
-@router.get("/infrastructure/statuses")
+@router.get(
+    "/infrastructure/statuses",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def statuses():
     return ok([{"key": s.value, "label": s.value.replace("_", " ").title()} for s in AssetStatus])
 
 
-@router.get("/zones")
+@router.get(
+    "/zones",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def list_zones(db: DbSession, user: CurrentUser):
     zones = service.list_zones(db)
     counts = dict(
@@ -90,7 +99,10 @@ def create_zone(payload: ZoneCreate, request: Request, db: DbSession, user: Curr
     return ok({"id": zone.id, "code": zone.code, "name": zone.name})
 
 
-@router.get("/infrastructure")
+@router.get(
+    "/infrastructure",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def list_assets(
     db: DbSession,
     user: CurrentUser,
@@ -140,7 +152,10 @@ def create_asset(payload: AssetCreate, request: Request, db: DbSession, user: Cu
     return ok(_asset_dict(asset))
 
 
-@router.get("/infrastructure/{asset_id}")
+@router.get(
+    "/infrastructure/{asset_id}",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def get_asset(asset_id: int, db: DbSession, user: CurrentUser):
     asset = service.get_asset(db, asset_id)
     dependents = service.dependencies_for(db, asset_id)
@@ -254,7 +269,10 @@ def archive_asset(
     return ok({"message": f"{asset.code} archived. History is preserved."})
 
 
-@router.get("/dependencies")
+@router.get(
+    "/dependencies",
+    dependencies=[Depends(require_permissions("infrastructure:read"))],
+)
 def list_dependencies(db: DbSession, user: CurrentUser, asset_id: int | None = None):
     rows = service.dependencies_for(db, asset_id)
     assets = {
@@ -301,7 +319,10 @@ def delete_dependency(dependency_id: int, request: Request, db: DbSession, user:
     return ok({"message": "Dependency removed."})
 
 
-@router.get("/twin/graph")
+@router.get(
+    "/twin/graph",
+    dependencies=[Depends(require_permissions("twin:read"))],
+)
 def twin_graph(db: DbSession, user: CurrentUser):
     assets = db.scalars(
         select(InfrastructureAsset).where(InfrastructureAsset.is_archived.is_(False))

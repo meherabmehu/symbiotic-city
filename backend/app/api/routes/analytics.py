@@ -24,6 +24,11 @@ from app.optimization import engine as optimization_engine
 router = APIRouter(tags=["analytics"])
 
 
+# The dashboard is the landing page for every signed-in role, and its payload is
+# already least-privilege: dashboard_bundle() is passed user.permission_keys and
+# only fills the sections the caller may see. Gating the whole endpoint on one
+# domain permission would both deny a role that legitimately lacks that domain
+# and hide the sections that role is entitled to.
 @router.get("/dashboard")
 def dashboard(db: DbSession, user: CurrentUser, days: int = Query(30, ge=1, le=365)):
     bundle = analytics.dashboard_bundle(db, user.permission_keys, days=days)
@@ -118,7 +123,11 @@ def overview(
 
 
 @router.get("/analytics/categories")
-def categories(db: DbSession, user: CurrentUser):
+def categories(
+    db: DbSession,
+    user: CurrentUser,
+    _: None = Depends(require_permissions("analytics:read")),
+):
     return ok(analytics.category_breakdown(db))
 
 
@@ -138,12 +147,20 @@ def incidents_trend(
 
 
 @router.get("/analytics/resources")
-def resource_analytics(db: DbSession, user: CurrentUser):
+def resource_analytics(
+    db: DbSession,
+    user: CurrentUser,
+    _: None = Depends(require_permissions("analytics:read")),
+):
     return ok(analytics.resource_utilisation(db))
 
 
 @router.get("/analytics/simulations")
-def simulation_analytics(db: DbSession, user: CurrentUser):
+def simulation_analytics(
+    db: DbSession,
+    user: CurrentUser,
+    _: None = Depends(require_permissions("analytics:read")),
+):
     return ok(
         {
             "comparison": analytics.simulation_comparison(db),
@@ -156,7 +173,7 @@ def simulation_analytics(db: DbSession, user: CurrentUser):
 def recovery_analytics(
     db: DbSession,
     user: CurrentUser,
-    _: None = Depends(require_permissions("task:read")),
+    _: None = Depends(require_permissions("analytics:read")),
     days: int = Query(90, ge=1, le=365),
 ):
     return ok(analytics.recovery_performance(db, days))
@@ -236,6 +253,11 @@ def export(
 # --------------------------------------------------------------------------- #
 # notifications
 # --------------------------------------------------------------------------- #
+# The notification inbox is personal: every query filters on
+# Notification.user_id == user.id and the handlers refuse to touch another
+# user's rows. A domain permission cannot describe "my own inbox" -- gating
+# these on incident:read denied a user their own notifications whenever their
+# role happened to lack that permission. Access is scoped by ownership instead.
 @router.get("/notifications")
 def list_notifications(
     db: DbSession,
@@ -365,7 +387,10 @@ def audit_actions(db: DbSession, user: CurrentUser, _: None = Depends(require_pe
     return ok([{"action": action, "count": count} for action, count in sorted(rows)])
 
 
-@router.get("/optimization/engine-info")
+@router.get(
+    "/optimization/engine-info",
+    dependencies=[Depends(require_permissions("optimization:read"))],
+)
 def engine_info(user: CurrentUser):
     return ok(
         {
