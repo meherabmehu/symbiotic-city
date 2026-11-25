@@ -1,5 +1,7 @@
 "use client";
 
+import { criticalityStats } from "@/lib/criticality";
+
 /**
  * Screen 14 — Resilience intelligence.
  *
@@ -453,9 +455,9 @@ function ExposureTab({ canPlan }: { canPlan: boolean }) {
                   ))}
                 </ol>
                 <p className="mt-2 text-[10px] text-ink-500">
-                  {criticality.data.fleet.assets_scored} assets scored · mean{" "}
-                  {criticality.data.fleet.mean_index.toFixed(1)} · peak{" "}
-                  {criticality.data.fleet.max_index.toFixed(1)}
+                  {criticalityStats(criticality.data).scored} assets scored · mean{" "}
+                  {criticalityStats(criticality.data).mean.toFixed(1)} · peak{" "}
+                  {criticalityStats(criticality.data).peak.toFixed(1)}
                   {canPlan ? "" : " · read-only view"}
                 </p>
                 <Assumptions items={criticality.data.model.assumptions} title="Criticality model" />
