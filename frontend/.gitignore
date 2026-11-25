@@ -1,3 +1,12 @@
 
 # Scratch directory used for one-off manual probes.
 .probe/
+
+# Next 16 regenerates this on every dev/build run, and writes a *different* import
+# per mode: `next build` wants .next/types/routes.d.ts, `next dev` wants
+# .next/dev/types/routes.d.ts. A tracked copy is therefore dirty in one mode or the
+# other, forever, and committing the build-mode version breaks typecheck in a fresh
+# checkout where .next does not exist yet. next dev, next build and next typegen all
+# create it before anything needs it, and tsconfig lists it in include, so its
+# absence is harmless.
+next-env.d.ts
