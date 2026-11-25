@@ -41,7 +41,10 @@ test.describe("authentication", () => {
     await page.getByLabel(/^password/i).fill("WrongPass#2026");
     await page.getByRole("button", { name: /sign in/i }).click();
 
-    await expect(page.getByRole("alert")).toBeVisible();
+    // Next.js renders its own `role="alert"` route announcer into the document,
+    // so a bare getByRole("alert") matches two elements and fails on strict
+    // mode. Assert the message itself, not just "some alert exists".
+    await expect(page.getByRole("alert").filter({ hasText: /sign-in failed/i })).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
   });
 
@@ -70,9 +73,13 @@ test.describe("authentication", () => {
 
   test("signing out ends the session", async ({ page }) => {
     await login(page, "operator");
-    // Sign out lives in the account menu in the header.
+    // Sign out lives in the account menu in the header. The trigger is the only
+    // element with aria-haspopup="menu"; its `aria-expanded` flip is the signal
+    // that the click landed, so assert it before waiting on the menu contents --
+    // otherwise a menu that never opens is reported as a missing menuitem.
     const menu = page.locator('button[aria-haspopup="menu"]').last();
     await menu.click();
+    await expect(menu).toHaveAttribute("aria-expanded", "true");
     await page.getByRole("menuitem", { name: /sign out/i }).click();
     await expect(page).toHaveURL(/\/login/);
 
