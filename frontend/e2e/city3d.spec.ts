@@ -199,6 +199,22 @@ test.describe("3d city", () => {
 
   test("replays a stored cascade, and only offers runs that completed", async ({ page }) => {
     await login(page, "analyst");
+
+    // The suite runs against a throwaway database with no simulation history, so
+    // this test creates the run it is about. Without that it would pass on a
+    // developer's machine and fail forever in CI -- which is exactly what happened
+    // before, and why the panel is not assumed to be pre-populated.
+    const csrfToken =
+      (await page
+        .context()
+        .cookies()
+        .then((cookies) => cookies.find((cookie) => cookie.name === "symbiotic_csrf")?.value)) ?? "";
+    const created = await page.request.post("/api/simulations/run", {
+      headers: { "X-CSRF-Token": csrfToken },
+      data: { initial_failure_ids: [1], failure_mode: "total_failure", name: "E2E replay seed" },
+    });
+    expect(created.ok(), `simulation run failed: ${created.status()}`).toBe(true);
+
     await page.goto("/twin");
     await expectShell(page);
 
