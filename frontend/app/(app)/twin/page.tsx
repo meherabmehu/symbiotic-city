@@ -261,7 +261,7 @@ export default function TwinPage() {
   const assetIncidents = useAsync<Incident[]>(
     async (signal) =>
       selected
-        ? (await api.list<Incident>(`/incidents${qs({ primary_asset_id: selected.id, page_size: 8 })}`, { signal })).data
+        ? (await api.list<Incident>(`/incidents${qs({ asset_id: selected.id, page_size: 8 })}`, { signal })).data
         : [],
     [selected?.id],
   );
