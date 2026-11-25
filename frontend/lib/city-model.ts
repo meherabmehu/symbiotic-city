@@ -755,6 +755,52 @@ export function focusPose(position: Point3, footprint: Footprint): CameraPose {
   };
 }
 
+/**
+ * A pose that frames an incident.
+ *
+ * Deliberately not the same as `focusPose`: an incident is about the asset *and*
+ * the streets around it, because the consequence of a failure is what reaches
+ * along the dependency links. So the camera pulls back further and looks down a
+ * little more, and the target sits below the building rather than at its middle.
+ */
+export function incidentPose(position: Point3, footprint: Footprint): CameraPose {
+  const distance = Math.max(footprint.height * 3.4, 34);
+  return {
+    position: [
+      position.x + distance * 0.72,
+      footprint.height + distance * 0.82,
+      position.z + distance * 0.72,
+    ],
+    target: [position.x, footprint.height * 0.3, position.z],
+  };
+}
+
+/**
+ * The pose that fits the whole city, honouring the aspect ratio.
+ *
+ * A fixed distance works for a wide window and crops the model in a tall one. This
+ * measures what is actually in front of the camera: the city is `CITY_EXTENT *
+ * 2` across, so the distance needed is that half-width divided by the tangent of
+ * the half field of view -- using the *narrower* of the vertical and horizontal
+ * fields of view, which is the one that would crop first.
+ */
+export function fitPose(mode: CameraMode, aspect: number, fovDegrees = 42): CameraPose {
+  const halfWidth = CITY_EXTENT * 1.08;
+  const vertical = (fovDegrees * Math.PI) / 180;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * Math.max(aspect, 0.2));
+  const halfAngle = Math.min(vertical, horizontal) / 2;
+  const distance = halfWidth / Math.tan(halfAngle);
+
+  // Keep the preset's viewing direction and move along it, so fitting from the
+  // top-down preset does not quietly become an isometric view.
+  const [bx, by, bz] = cameraPose(mode).position;
+  const length = Math.hypot(bx, by, bz) || 1;
+  return {
+    position: [(bx / length) * distance, (by / length) * distance, (bz / length) * distance],
+    target: [0, 0, 0],
+  };
+}
+
 /** Clamp an orbit target inside the city so panning cannot lose the model. */
 export function clampTarget(target: [number, number, number]): [number, number, number] {
   const limit = CITY_BOUNDS.panLimit;

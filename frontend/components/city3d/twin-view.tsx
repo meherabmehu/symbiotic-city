@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { Box, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
+import { Box, Frame, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
 import { City3D, hasWebGL, type City3DOverlay, type Quality } from "@/components/city3d/city-3d";
 import { CAMERA_MODES, STATUS_STYLES, type CameraMode } from "@/lib/city-model";
 import type { TwinGraph, TwinNode } from "@/lib/types";
@@ -26,7 +26,7 @@ const QUALITY_LABELS: Record<Quality, string> = {
 const CAMERA_ICON: Record<CameraMode, React.ComponentType<{ className?: string }>> = {
   perspective: Box,
   isometric: Layers,
-  top: RotateCcw,
+  top: Frame,
 };
 
 export interface TwinViewProps {
@@ -61,6 +61,8 @@ export function TwinView({
   const [mode, setMode] = useState<CameraMode>("perspective");
   const [focusId, setFocusId] = useState<number | null>(null);
   const [showTraffic, setShowTraffic] = useState(true);
+  // A counter, not a boolean: pressing "Fit city" twice should fit twice.
+  const [fitRequest, setFitRequest] = useState(0);
   const [showScenery, setShowScenery] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [listOpen, setListOpen] = useState(false);
@@ -137,6 +139,15 @@ export function TwinView({
         </Button>
 
         <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setFitRequest((value) => value + 1)}
+          title="Frame the whole city in the panel, whatever its size"
+        >
+          <Frame className="h-3.5 w-3.5" aria-hidden /> Fit city
+        </Button>
+
+        <Button
           variant={showTraffic ? "secondary" : "ghost"}
           size="sm"
           onClick={() => setShowTraffic((v) => !v)}
@@ -192,8 +203,10 @@ export function TwinView({
           showTraffic={showTraffic}
           showScenery={showScenery}
           activeIncidents={activeIncidents}
+          fitRequest={fitRequest}
           quality={quality}
           mode={mode}
+          onModeChange={setMode}
           focusId={focusId}
           height={expanded ? Math.max(height, 720) : height}
         />
