@@ -8,7 +8,8 @@ production-shaped path (Postgres, two containers).
 ### Prerequisites
 
 * Python 3.11+ (3.12 works; 3.13 does too, OR-Tools wheels permitting)
-* Node.js 20.9+ and npm (Next.js 16 requires it)
+* Node.js 20.19+ and npm (Next.js 16 requires 20.9; vitest 4 pulls vite 8, which
+  requires 20.19)
 * No database server: SQLite is the default
 
 ### Install

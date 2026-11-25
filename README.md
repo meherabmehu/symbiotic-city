@@ -40,7 +40,7 @@ SYMBIOTIC CITY answers three questions before the incident, and one after it:
 | Screen | What it does |
 | --- | --- |
 | **Command deck** | Live KPIs, active incidents, pending approvals, task board, resource spotlights — one bundle request. |
-| **City twin** | Canvas graph of the 23-asset network with zoom, seed-a-failure, and keyboard asset navigation. |
+| **City twin** | Interactive 3D model of the 23-asset network — animated traffic, orbit/pan/zoom, camera presets, dependency arcs, status marks, plus overlays for the replay, heatmap, criticality and investment views. Falls back to an accessible list when WebGL is unavailable. |
 | **Failure lab** | Configure mode / threshold / depth / seed, run, then open the replay with affected population and depth bands. |
 | **Recovery planner** | Build demands from a run, preview feasibility, submit to CP-SAT, and read the explanation when it says *infeasible*. |
 | **Plan console** | Approve or reject; if the reservation step fails, the approval survives and the compensation is reported honestly. |
@@ -161,8 +161,11 @@ backend/
                      migrations, PostgreSQL parity
 frontend/
   app/               27 routes: landing, auth, shell, and every operational screen
-  components/        ui primitives, city twin canvas, charts, layout
-  lib/               typed API client, session context, formatters
+  components/        ui primitives, 3D city (city3d/), twin canvas fallback, charts, layout
+  lib/               typed API client, session context, formatters, city layout model,
+                     replay and time-travel maths
+  tests/unit/        vitest: layout maths, status resolution, scene graph, replay, time travel
+  e2e/               playwright: journeys, responsive, workflow, and the 3D twin
 docs/                architecture, API reference, model maths, setup, demo script,
                      and AUDIT.md (independently verified findings)
 scripts/             dev.sh, seed.sh, verify.sh, smoke.py
@@ -180,6 +183,13 @@ scripts/             dev.sh, seed.sh, verify.sh, smoke.py
   not as a distributed optimiser.
 * **No live telemetry.** The twin reads seeded state plus operations performed in
   the app; there is no SCADA/Modbus feed, and nothing pretends to be one.
+* **The 3D city is a view, not a different model.** Building placement is derived
+  from the same 0-100 grid the 2D map used, geometry is built from primitives, and
+  the traffic is decorative — no vehicle carries an asset id. Every status, number
+  and dependency on screen comes from the API. Where an asset's recorded
+  coordinates put two buildings on top of each other, the layout nudges them apart
+  so both can be seen and selected; the map is still the recorded geography, not a
+  re-survey of it.
 * **Workflow durability is transactional, not a queue.** Steps run inside per-step
   savepoints with recorded compensation; it is not a Temporal-style durable
   execution engine, and it does not resume after a process crash mid-step.

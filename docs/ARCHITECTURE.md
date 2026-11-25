@@ -130,8 +130,18 @@ the step is rolled back, and the user is pointed at the workflow.
 * **API client** (`lib/api.ts`): typed wrappers, CSRF header injection from the
   readable cookie, error normalisation to `{code, message, details}`, and
   `credentials: "include"`.
-* **Charts** are Recharts; the twin is hand-drawn on `<canvas>` (no WebGL, no
-  external map tiles, no CDN) so it works offline and in restricted sandboxes.
+* **Charts** are Recharts. The twin is React Three Fiber + three.js: no map tiles,
+  no model downloads, no CDN — geometry is all primitives built from a part table,
+  and textures are omitted rather than fetched, so it works offline and in
+  restricted sandboxes. A 2D canvas twin and an accessible asset list remain as the
+  WebGL-unavailable path.
+* **The 3D city is a projection, not a second model.** `lib/city-model.ts` is a
+  pure module (no three.js import) that turns the twin graph into placed assets,
+  a road grid routed around their plots, traffic lanes, zone hulls and scenery;
+  `lib/replay.ts` and `lib/timeline.ts` do the same for a simulated cascade and the
+  recorded change log. All three are tested in node without a GPU, which is also
+  what makes the scene tests possible: `@react-three/test-renderer` builds the real
+  fiber tree with no GL context.
 * **Styling** is Tailwind with a small token set (navy `#040b18`/`#061225`,
   accent `#45d8f5`, mint `#3ee6a5`, amber `#ffb545`, coral `#ff6b6b`,
   hairline `rgba(143,179,212,0.16)`). System font stack only: no font CDN.
