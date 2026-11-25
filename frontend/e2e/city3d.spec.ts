@@ -94,10 +94,32 @@ test.describe("3d city", () => {
       "true",
     );
 
-    // The legend names every status in words, next to its mark.
+    // The legend names every status in words, next to its mark. It is scoped to the
+    // legend itself: the status filter dropdown also contains the word
+    // "maintenance", and matching that instead would pass without a legend.
+    const legend = page.getByTestId("city3d-legend");
+    await expect(legend).toBeVisible();
     for (const label of ["Operational", "Degraded", "Failed", "Maintenance", "Recovering"]) {
-      await expect(page.getByText(label, { exact: false }).first()).toBeVisible();
+      await expect(legend.getByText(label, { exact: true })).toBeVisible();
     }
+  });
+
+  test("keeps the keyboard asset navigator the 2D twin had", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    // This strip predates the 3D view; two other suites depend on it, and it is the
+    // only way to select an asset by typing rather than clicking geometry.
+    const filter = page.getByRole("textbox", { name: /filter twin assets/i });
+    await expect(filter).toBeVisible();
+    await filter.fill("PS-01");
+
+    const strip = page.getByRole("list", { name: /twin assets/i });
+    await expect(strip).toContainText(/PS-01/);
+    // Filtering removes the others, so the strip is a real filter and not just a
+    // highlight.
+    await expect(strip.getByRole("button")).toHaveCount(1);
   });
 
   test("selects an asset from the accessible list and shows its detail panel", async ({ page }) => {
@@ -128,8 +150,15 @@ test.describe("3d city", () => {
 
     // The panel is in the sidebar; it should show a score per zone once the
     // heatmap request lands.
-    await expect(page.getByText(/Exposure bands/i)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/people at risk/i).first()).toBeVisible();
+    const bands = page.getByText(/Exposure bands/i);
+    await expect(bands).toBeAttached({ timeout: 15_000 });
+    await bands.scrollIntoViewIfNeeded();
+    await expect(bands).toBeVisible();
+
+    const atRisk = page.getByTestId("heatmap-at-risk");
+    await expect(atRisk).toBeAttached({ timeout: 15_000 });
+    await atRisk.scrollIntoViewIfNeeded();
+    await expect(atRisk).toBeVisible();
 
     // And it must be able to put those numbers on the map.
     const toggle = page.getByRole("button", { name: /show on map|overlay on/i });
@@ -143,14 +172,21 @@ test.describe("3d city", () => {
     await expectShell(page);
 
     const panel = page.getByText(/Replay a cascade/i).first();
+    await expect(panel).toBeAttached();
+    await panel.scrollIntoViewIfNeeded();
     await expect(panel).toBeVisible();
 
     const select = page.getByRole("combobox", { name: /simulation run to replay/i });
+    await expect(select).toBeAttached();
+    await select.scrollIntoViewIfNeeded();
     await expect(select).toBeVisible();
 
     // With no run selected the panel explains itself rather than showing an empty
     // scrubber that appears to be playing nothing.
-    await expect(page.getByText(/pick a run to watch its cascade/i)).toBeVisible({ timeout: 10_000 });
+    const hint = page.getByText(/pick a run to watch its cascade/i);
+    await expect(hint).toBeAttached({ timeout: 10_000 });
+    await hint.scrollIntoViewIfNeeded();
+    await expect(hint).toBeVisible();
   });
 
   test("rewinds recorded history without claiming to restore it", async ({ page }) => {
@@ -158,17 +194,25 @@ test.describe("3d city", () => {
     await page.goto("/twin");
     await expectShell(page);
 
-    await expect(page.getByText(/Time travel/i).first()).toBeVisible();
+    const heading = page.getByText(/Time travel/i).first();
+    await expect(heading).toBeAttached();
+    await heading.scrollIntoViewIfNeeded();
+    await expect(heading).toBeVisible();
+
     const scrub = page.getByRole("slider", { name: /rewind through recorded changes/i });
+    await expect(scrub).toBeAttached({ timeout: 10_000 });
+    await scrub.scrollIntoViewIfNeeded();
 
     if (await scrub.isVisible()) {
       const max = Number(await scrub.getAttribute("max"));
       if (max > 0) {
         await scrub.fill(String(Math.floor(max / 2)));
         // The panel must say what it is doing: a reconstruction, not a rollback.
-        await expect(page.getByText(/reconstructed from the change log/i)).toBeVisible();
+        const notice = page.getByText(/reconstructed from the change log/i);
+        await expect(notice).toBeAttached();
+        await expect(notice).toBeVisible();
         await page.getByRole("button", { name: /back to present/i }).click();
-        await expect(page.getByText(/reconstructed from the change log/i)).toBeHidden();
+        await expect(notice).toHaveCount(0);
       }
     }
   });

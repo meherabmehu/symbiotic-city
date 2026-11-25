@@ -105,7 +105,9 @@ export function HeatmapPanel({
           <option value="population">Most people at risk first</option>
         </Select>
         <Badge tone="warning">
-          {formatNumber(heatmap.totals.population_at_risk, 0)} people at risk
+          <span data-testid="heatmap-at-risk">
+            {formatNumber(heatmap.totals.population_at_risk, 0)} people at risk
+          </span>
         </Badge>
       </div>
 

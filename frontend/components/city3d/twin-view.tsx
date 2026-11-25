@@ -196,7 +196,10 @@ export function TwinView({
 
         {/* The legend is DOM, not in-canvas: text stays crisp, it is selectable,
             and it is read by assistive technology without a canvas hook. */}
-        <div className="pointer-events-none absolute bottom-3 left-3 rounded-xl border border-white/10 bg-navy-950/85 px-3 py-2 backdrop-blur">
+        <div
+          data-testid="city3d-legend"
+          className="pointer-events-none absolute bottom-3 left-3 rounded-xl border border-white/10 bg-navy-950/85 px-3 py-2 backdrop-blur"
+        >
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-500">
             Status
           </p>
@@ -231,7 +234,95 @@ export function TwinView({
         building to inspect it. Move the whole city with the presets above.
       </p>
 
+      {/* The asset strip predates the 3D view and stays: it is the fastest path to
+          a known asset by keyboard, and the chips carry status as a dot as well as
+          the text in the list below. */}
+      <AssetNavigator nodes={graph?.nodes ?? []} selected={selectedId} onSelect={select} />
+
       <AssetList graph={graph} selectedId={selectedId} onSelect={select} defaultOpen={listOpen} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------- asset navigator */
+
+const CATEGORY_GLYPH: Record<string, React.ComponentType<{ className?: string }>> = {};
+
+/**
+ * Filterable chip strip of every asset.
+ *
+ * Kept from the 2D twin because it is the keyboard route to selection: type three
+ * characters, tab to the chip, press Enter. The 3D canvas cannot offer that.
+ */
+export function AssetNavigator({
+  nodes,
+  selected,
+  onSelect,
+}: {
+  nodes: TwinNode[];
+  selected: number | null;
+  onSelect: (node: TwinNode | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return nodes;
+    return nodes.filter(
+      (node) =>
+        node.name.toLowerCase().includes(needle) ||
+        node.code.toLowerCase().includes(needle) ||
+        node.category.replace(/_/g, " ").includes(needle),
+    );
+  }, [nodes, query]);
+
+  return (
+    <div className="mt-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-500">
+          Keyboard asset navigator
+        </p>
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Filter assets…"
+          aria-label="Filter twin assets"
+          className="input max-w-[220px] py-1.5 text-xs"
+        />
+      </div>
+      <ul className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto scrollbar-slim" aria-label="Twin assets">
+        {filtered.map((node) => {
+          const visual = node.status === "offline" ? "failed" : node.status;
+          const style = STATUS_STYLES[visual as keyof typeof STATUS_STYLES] ?? STATUS_STYLES.operational;
+          const active = selected === node.id;
+          return (
+            <li key={node.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(active ? null : node)}
+                aria-pressed={active}
+                title={`${node.code} · ${node.name} · ${style.label}`}
+                className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition ${
+                  active
+                    ? "border-accent/50 bg-accent/10 text-white"
+                    : "border-white/10 bg-white/[0.03] text-ink-300 hover:border-accent/30 hover:text-white"
+                }`}
+              >
+                {node.code}
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: style.color }}
+                  aria-hidden
+                />
+                <span className="sr-only">{style.label}</span>
+              </button>
+            </li>
+          );
+        })}
+        {filtered.length === 0 ? (
+          <li className="px-1 py-2 text-[11px] text-ink-500">No asset matches “{query}”.</li>
+        ) : null}
+      </ul>
     </div>
   );
 }
