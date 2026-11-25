@@ -9,13 +9,14 @@
 
 | ধাপ | ফলাফল |
 | --- | --- |
-| `git clone` (পাবলিক, লগইন ছাড়া) | `0485286` — নতুন কোড সব এসেছে |
+| `git clone` (পাবলিক, লগইন ছাড়া) | `9977880` — নতুন কোড সব এসেছে |
 | venv + `pip install` | সফল |
 | `npm install` | সফল, `npm audit` — **০টা vulnerability** |
 | `.env` ছাড়া চালু (ডিফল্ট SQLite) | ২৩টা asset, ৫টা zone নিজে থেকে সিড হয়েছে |
 | `./scripts/dev.sh` | API `:8000`, web `:3000` উঠেছে, আসল ডেটা দিয়েছে (PS-02 = 84.3) |
 | `python scripts/smoke.py` | সব চেক পাশ |
 | `./scripts/verify.sh` | **277 passed, 10 skipped**, typecheck ও build পাশ |
+| ব্রাউজার টেস্ট (CI-তে Playwright) | **৭১টা টেস্ট, সব পাশ** — লগইন, সাইন-আউট, প্রতিটা স্ক্রিন, মোবাইল লেআউট |
 | `alembic upgrade head` | দুটো migration-ই চলেছে, whatif টেবিল তৈরি |
 
 ধরুন আপনি কিছুই ইনস্টল করা নেই এমন একটা ল্যাপটপে বসে আছেন।
@@ -62,7 +63,7 @@ cd symbiotic-city
 
 ```bash
 git log --oneline -1
-# 0485286 Upgrade Next.js to 16.4.6 to clear security advisories
+# 9977880 Let the audit table column shrink so the table can scroll
 ```
 
 ---
@@ -250,6 +251,8 @@ cp .env.example .env
 | `blocked … postinstall` (`sharp`) | npm-এর allow-scripts | উপেক্ষা করুন, বা `npm approve-scripts sharp` |
 | `Another next dev server is already running` | একই ফোল্ডারে দুটো dev সার্ভার | আগেরটা বন্ধ করুন (Ctrl+C), তারপর আবার |
 | Next.js পুরনো `.next` নিয়ে ৫০০ error | আগের ভার্সনের build cache | `rm -rf frontend/.next` (PowerShell: `Remove-Item -Recurse -Force frontend\.next`) |
+| পেজ খোলে, কিন্তু **কোনো বাটনে কাজ করে না**, লগইন করলে পেজ রিলোড হয়ে `/login?email=...` হয় | ব্রাউজারের JS আর Next-এর dev-asset একই origin-এ মেলেনি, তাই hydrate হয়নি | `http://127.0.0.1:3000` **এবং** `http://localhost:3000` দুটোই চেষ্টা করুন। কোডে `allowedDevOrigins`-এ দুটোই দেওয়া আছে; হালনাগাদ কোড পেতে `git pull` করুন |
+| কনসোলে `403 (Unauthorized)` শুধু `/_next/static/...` ফাইলে | একই কারণ — dev asset ব্লক হয়েছে | উপরের সারির মতোই |
 | PowerShell: `'&&' is not a valid statement separator` | PowerShell 5.1 `&&` চেনে না | `;` এর বদলে এক লাইন করে দিন, বা `.\scripts\dev.ps1 setup` |
 | PowerShell: `running scripts is disabled` | Execution Policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | Windows: `python3` দিলে Store খোলে | Microsoft Store stub | `python` লিখুন |
