@@ -14,6 +14,7 @@ import {
   ArrowUpRight,
   Cpu,
   Flame,
+  GitCompare,
   History,
   Layers,
   Network,
@@ -27,6 +28,7 @@ import { HeatmapPanel } from "@/components/city3d/heatmap-panel";
 import { ReplayPanel } from "@/components/city3d/replay-panel";
 import { TimelinePanel, presentFrame, timelineOverlay } from "@/components/city3d/timeline-panel";
 import { LensPanel, type LensMode } from "@/components/city3d/lens-panel";
+import { RunComparePanel } from "@/components/city3d/run-compare-panel";
 import { frameAt, statusSteps } from "@/lib/timeline";
 import type { City3DOverlay } from "@/components/city3d/city-3d";
 import {
@@ -77,6 +79,8 @@ export default function TwinPage() {
   const [heatZone, setHeatZone] = useState<string | null>(null);
   const [lens, setLens] = useState<LensMode>("off");
   const [replayRunId, setReplayRunId] = useState<number | null>(null);
+  const [compareAId, setCompareAId] = useState<number | null>(null);
+  const [compareBId, setCompareBId] = useState<number | null>(null);
   const [replayLevels, setReplayLevels] = useState<Map<number, "failed" | "degraded" | "affected">>(new Map());
   const [timelineIndex, setTimelineIndex] = useState<number | null>(null);
   const { data, loading, error, reload } = useAsync<TwinGraph>(() => api.get("/twin/graph"), []);
@@ -105,6 +109,15 @@ export default function TwinPage() {
     query.addEventListener("change", handler);
     return () => query.removeEventListener("change", handler);
   }, []);
+
+  const compareA = useAsync<SimulationRunDetail>(
+    () => (compareAId ? api.get(`/simulations/${compareAId}`) : Promise.resolve(null as unknown as SimulationRunDetail)),
+    [compareAId],
+  );
+  const compareB = useAsync<SimulationRunDetail>(
+    () => (compareBId ? api.get(`/simulations/${compareBId}`) : Promise.resolve(null as unknown as SimulationRunDetail)),
+    [compareBId],
+  );
 
   const overlay = useMemo<City3DOverlay>(() => {
     const result: City3DOverlay = {};
@@ -156,6 +169,60 @@ export default function TwinPage() {
       result.intensity = byAsset;
     }
 
+    // A/B comparison. Only the *differences* are drawn, because the point of the
+    // comparison is where the two runs part company -- painting the whole of B
+    // would make the two runs look like one run and hide the answer.
+    if (
+      compareAId != null &&
+      compareBId != null &&
+      compareA.data &&
+      compareB.data &&
+      replayLevels.size === 0
+    ) {
+      const left = new Map(compareA.data.impacts.map((impact) => [impact.asset_id, impact.impact_level]));
+      const right = new Map(compareB.data.impacts.map((impact) => [impact.asset_id, impact.impact_level]));
+      const differing: NonNullable<City3DOverlay["impacts"]> = [];
+      for (const [assetId, level] of right) {
+        if (left.get(assetId) !== level) {
+          differing.push({
+            asset_id: assetId,
+            impact_level: level,
+            code: "",
+            name: "",
+            category: "",
+            depth: 0,
+            impact_score: 0,
+            capacity_loss_percent: 0,
+            affected_population: 0,
+            cause_asset_id: null,
+            explanation: "",
+          });
+        }
+      }
+      for (const [assetId, level] of left) {
+        if (!right.has(assetId)) {
+          // A breaks it and B does not: drawn as recovered-in-B rather than as a
+          // failure, so the eye reads it as an improvement rather than a loss.
+          differing.push({
+            asset_id: assetId,
+            impact_level: level,
+            code: "",
+            name: "",
+            category: "",
+            depth: 0,
+            impact_score: 0,
+            capacity_loss_percent: 0,
+            affected_population: 0,
+            cause_asset_id: null,
+            explanation: "",
+          });
+        }
+      }
+      result.impacts = differing;
+      result.scenario = "hypothetical";
+      result.originId = compareB.data.initial_failure_ids?.[0] ?? null;
+    }
+
     // Timeline overrides are additive: they describe the past, so they coexist
     // with a replay or a heat layer rather than replacing it.
     if (timeline.data && timelineIndex !== null) {
@@ -169,6 +236,10 @@ export default function TwinPage() {
     replayLevels,
     replayRunId,
     replayDetail.data,
+    compareAId,
+    compareBId,
+    compareA.data,
+    compareB.data,
     heatOn,
     heatmap.data,
     timeline.data,
@@ -563,6 +634,25 @@ export default function TwinPage() {
                 const node = data?.nodes.find((candidate) => candidate.id === id) ?? null;
                 setSelected(node);
               }}
+            />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Compare two runs"
+              subtitle="Where two stored simulations part company"
+              icon={<GitCompare className="h-4 w-4" />}
+            />
+            <RunComparePanel
+              runs={runs.data ?? []}
+              aId={compareAId}
+              bId={compareBId}
+              onSelectA={setCompareAId}
+              onSelectB={setCompareBId}
+              a={compareA.data ?? null}
+              b={compareB.data ?? null}
+              loading={compareA.loading || compareB.loading}
+              error={compareA.error ?? compareB.error}
             />
           </Panel>
 
