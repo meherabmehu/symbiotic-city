@@ -98,7 +98,11 @@ export function PageHeader({
 }) {
   return (
     <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div>
+      {/* min-w-0 lets this column shrink below its content's intrinsic width.
+          As a flex item its default is min-width:auto, so a long title or
+          description pushed the whole row past the viewport instead of
+          wrapping -- no scrollbar, because nothing overflowed its own box. */}
+      <div className="min-w-0">
         {eyebrow ? (
           <p className="mb-1 font-display text-[11px] font-semibold uppercase tracking-[0.22em] text-accent">
             {eyebrow}
