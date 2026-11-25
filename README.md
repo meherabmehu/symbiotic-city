@@ -85,6 +85,7 @@ Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/API.md](docs/
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | The recording script, its two cuts, and the checklist |
 | [docs/RESILIENCE_INTELLIGENCE_REPORT.md](docs/RESILIENCE_INTELLIGENCE_REPORT.md) | The six resilience features: what was measured, what was not verified |
 | [docs/SUBMISSION.md](docs/SUBMISSION.md) | S01/S02/S03 status, stated without inflation |
+| [docs/WORK_REPORT_BN.md](docs/WORK_REPORT_BN.md) | The whole job in Bangla: every phase, every defect found, and the measured numbers behind them |
 
 Each claim is marked **Verified**, **Partially verified**, **Not verified**,
 **Blocked** or **Failed**. No incomplete test is reported as a pass.
