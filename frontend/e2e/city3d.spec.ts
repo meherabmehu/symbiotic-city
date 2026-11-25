@@ -366,28 +366,54 @@ test.describe("3d city", () => {
   });
 
   test("compares two stored runs and names the difference", async ({ page }) => {
-    await login(page, "operator");
+    await login(page, "analyst");
+
+    // Two runs, created here. The suite runs against a throwaway database with no
+    // simulation history, so a comparison panel would otherwise only ever render its
+    // "two runs are needed" notice -- and the test would be asserting that instead of
+    // the comparison, while still passing.
+    const csrfToken =
+      (await page
+        .context()
+        .cookies()
+        .then((cookies) => cookies.find((cookie) => cookie.name === "symbiotic_csrf")?.value)) ?? "";
+
+    // Deliberately different origins, so the comparison has something to say. Two
+    // runs from the same origin would produce "exactly the same" and prove nothing
+    // about the diff.
+    for (const [origin, name] of [
+      [1, "E2E compare A"],
+      [4, "E2E compare B"],
+    ] as const) {
+      const created = await page.request.post("/api/simulations/run", {
+        headers: { "X-CSRF-Token": csrfToken },
+        data: { initial_failure_ids: [origin], failure_mode: "total_failure", name },
+      });
+      expect(created.ok(), `simulation run failed: ${created.status()}`).toBe(true);
+    }
+
     await page.goto("/twin");
     await expectShell(page);
 
-    await expect(page.getByRole("heading", { name: /compare two runs/i })).toBeVisible();
+    const heading = page.getByRole("heading", { name: /compare two runs/i });
+    await expect(heading).toBeAttached();
+    await heading.scrollIntoViewIfNeeded();
 
-    const runA = page.getByLabel("First run to compare");
-    const runB = page.getByLabel("Second run to compare");
-    await expect(runA).toBeVisible();
+    const runA = page.getByRole("combobox", { name: /first run to compare/i });
+    await expect(runA).toBeVisible({ timeout: 40_000 });
 
     const options = await runA.locator("option").count();
-    // One placeholder plus however many completed runs the seeded database has.
-    test.skip(options < 3, "needs at least two completed simulation runs");
+    // One placeholder plus the two runs just created.
+    expect(options).toBeGreaterThanOrEqual(3);
 
     await runA.selectOption({ index: 1 });
-    await runB.selectOption({ index: 2 });
+    await page.getByRole("combobox", { name: /second run to compare/i }).selectOption({ index: 2 });
 
-    // The comparison must produce a verdict rather than an empty table: a run that
-    // has not loaded is not an empty run.
+    // The verdict, not merely a table: two different origins must produce a
+    // statement about which is worse, and the panel must not answer with silence.
     await expect(
       page.getByText(/exactly the same|trades nothing|strictly worse|Neither run dominates/i),
-    ).toBeVisible({ timeout: 20_000 });
+    ).toBeVisible({ timeout: 30_000 });
   });
 
   test("reports the measured cost of the scene rather than a claim", async ({ page }) => {
@@ -401,7 +427,11 @@ test.describe("3d city", () => {
     await expect(stats).toBeVisible({ timeout: 20_000 });
     // Collapsed by default: the numbers are available, not in the way.
     await stats.locator("summary").click();
-    await expect(stats.getByText("Draw calls")).toBeVisible();
-    await expect(stats.getByText(/measured|Read from three.js/i)).toBeVisible();
+    // `exact` is required: the summary line above also contains "draw calls", so a
+    // substring match resolves to two elements and fails on strictness.
+    await expect(stats.getByText("Draw calls", { exact: true })).toBeVisible();
+    await expect(stats.getByText("Materials", { exact: true })).toBeVisible();
+    // The panel says where its numbers come from rather than presenting them bare.
+    await expect(stats.getByText(/read from three\.js/i)).toBeVisible();
   });
 });
