@@ -73,11 +73,16 @@ test.describe("authentication", () => {
 
   test("signing out ends the session", async ({ page }) => {
     await login(page, "operator");
-    // Sign out lives in the account menu in the header. The trigger is the only
-    // element with aria-haspopup="menu"; its `aria-expanded` flip is the signal
-    // that the click landed, so assert it before waiting on the menu contents --
-    // otherwise a menu that never opens is reported as a missing menuitem.
-    const menu = page.locator('button[aria-haspopup="menu"]').last();
+    // Sign out lives in the account menu in the header.
+    //
+    // Scoped to the banner deliberately: Next 16 renders its dev-tools indicator
+    // as a `button[aria-haspopup="menu"]` in the same document, and it comes
+    // after ours, so an unscoped `.last()` clicks the framework's button and
+    // then reports the missing menuitem as if the app were broken. The app's
+    // trigger is the only one inside <header>. `aria-expanded` says whether the
+    // click actually opened our menu.
+    const banner = page.getByRole("banner");
+    const menu = banner.locator('button[aria-haspopup="menu"]');
     await menu.click();
     await expect(menu).toHaveAttribute("aria-expanded", "true");
     await page.getByRole("menuitem", { name: /sign out/i }).click();
