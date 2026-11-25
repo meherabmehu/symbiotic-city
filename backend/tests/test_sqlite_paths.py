@@ -81,3 +81,32 @@ def test_default_url_is_absolute():
     assert resolved is not None
     assert resolved.is_absolute()
     assert resolved == Path(resolved).resolve()
+
+
+def test_env_example_points_at_the_default_database():
+    """Copying `.env.example` must not move the database.
+
+    It used to: the example said ``sqlite:///./data/symbiotic_city.db``, which
+    resolves under the repository root, while the built-in default is
+    ``backend/data/symbiotic_city.db``. A user who ran once without a `.env` and
+    then copied the example was silently pointed at a different, empty file --
+    their data looked deleted. Keeping the two in step is the fix, and this test
+    is what stops them drifting apart again.
+    """
+    example = (REPO_DIR / ".env.example").read_text(encoding="utf-8")
+
+    urls = [
+        line.split("=", 1)[1].strip()
+        for line in example.splitlines()
+        if line.startswith("DATABASE_URL=")
+    ]
+    assert len(urls) == 1, "exactly one DATABASE_URL should be set, not a block of them"
+
+    # The default is itself a computed f-string, so read it off the field rather
+    # than restating the path here.
+    builtin_default = Settings(
+        database_url=Settings.model_fields["database_url"].default
+    ).sqlite_path
+    from_example = Settings(database_url=urls[0], _env_file=None).sqlite_path
+
+    assert from_example == builtin_default

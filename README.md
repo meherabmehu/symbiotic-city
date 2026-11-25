@@ -54,7 +54,7 @@ SYMBIOTIC CITY answers three questions before the incident, and one after it:
 
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────┐
-│  Next.js 15 console (3000)  │  /api  │  FastAPI service (8000)      │
+│  Next.js 16 console (3000)  │  /api  │  FastAPI service (8000)      │
 │  App Router · RSC · canvas  │ ─────► │  routers → services → models │
 │  cookie session + CSRF      │        │                              │
 └─────────────────────────────┘        │  ┌────────────────────────┐  │
