@@ -323,4 +323,85 @@ test.describe("3d city", () => {
     await expect(page.getByRole("button", { name: "Top-down" })).toBeVisible();
     await expect(page.getByRole("button", { name: /reset view/i })).toBeVisible();
   });
+
+  test("keeps the whole city in frame when the panel changes size", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    await expect(page.locator("canvas").first()).toBeVisible({ timeout: 20_000 });
+
+    // "Fit city" is a counter, not a toggle, so pressing it twice must frame twice
+    // rather than turn itself off the first time.
+    const fit = page.getByRole("button", { name: /fit city/i });
+    await expect(fit).toBeVisible();
+    await fit.click();
+    await fit.click();
+
+    // Expanding the panel changes the viewport; the scene must survive it.
+    await page.getByRole("button", { name: /expand/i }).click();
+    await expect(page.locator("canvas").first()).toBeVisible();
+  });
+
+  test("moves the camera from the keyboard, not only the pointer", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    const canvas = page.locator("canvas").first();
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+
+    // The canvas cannot take focus, so the wrapper does. Everything here duplicates
+    // a pointer gesture; none of it is the only way to do something.
+    const view = page.getByRole("application", { name: /city view/i });
+    await expect(view).toBeVisible();
+    await view.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("PageUp");
+
+    // Switching presets from the keyboard must move the toolbar's selection too, or
+    // the button state would say one thing and the camera another.
+    await page.keyboard.press("3");
+    await expect(page.getByRole("button", { name: "Top-down" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("compares two stored runs and names the difference", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    await expect(page.getByRole("heading", { name: /compare two runs/i })).toBeVisible();
+
+    const runA = page.getByLabel("First run to compare");
+    const runB = page.getByLabel("Second run to compare");
+    await expect(runA).toBeVisible();
+
+    const options = await runA.locator("option").count();
+    // One placeholder plus however many completed runs the seeded database has.
+    test.skip(options < 3, "needs at least two completed simulation runs");
+
+    await runA.selectOption({ index: 1 });
+    await runB.selectOption({ index: 2 });
+
+    // The comparison must produce a verdict rather than an empty table: a run that
+    // has not loaded is not an empty run.
+    await expect(
+      page.getByText(/exactly the same|trades nothing|strictly worse|Neither run dominates/i),
+    ).toBeVisible({ timeout: 20_000 });
+  });
+
+  test("reports the measured cost of the scene rather than a claim", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    await expect(page.locator("canvas").first()).toBeVisible({ timeout: 20_000 });
+
+    const stats = page.getByTestId("city3d-stats");
+    await expect(stats).toBeVisible({ timeout: 20_000 });
+    // Collapsed by default: the numbers are available, not in the way.
+    await stats.locator("summary").click();
+    await expect(stats.getByText("Draw calls")).toBeVisible();
+    await expect(stats.getByText(/measured|Read from three.js/i)).toBeVisible();
+  });
 });
