@@ -509,12 +509,19 @@ export function DependencyLinks({
   show,
   compromised,
   selectedId,
+  cascade,
   onSelect,
 }: {
   edges: PlacedEdge[];
   show: boolean;
   compromised?: Set<number>;
   selectedId?: number | null;
+  /**
+   * Hop count from a cascade's origin, per asset. When present, every link that
+   * carries the cascade is coloured by how far along the chain it sits, so an
+   * edge deep in the cascade is visibly cooler than one next to the origin.
+   */
+  cascade?: Map<number, number>;
   onSelect?: (id: number) => void;
 }) {
   const { geometry } = useMemo(() => {
@@ -524,12 +531,25 @@ export function DependencyLinks({
     const neutral = new THREE.Color("#3d6d93");
     const hot = new THREE.Color("#ff6b6b");
     const highlight = new THREE.Color("#45d8f5");
+    // The far end of a cascade is a duller red than the near end. Same hue, so the
+    // meaning is still "carrying a failure", but the ordering is legible without a
+    // legend.
+    const far = new THREE.Color("#8a4650");
 
     for (const placed of edges) {
       const isCompromised = compromised?.has(placed.edge.target) || compromised?.has(placed.edge.source);
       const isHighlighted =
         selectedId != null && (placed.edge.source === selectedId || placed.edge.target === selectedId);
-      const color = isCompromised ? hot : isHighlighted ? highlight : neutral;
+
+      const targetDepth = cascade?.get(placed.edge.target);
+      const sourceDepth = cascade?.get(placed.edge.source);
+      const depth = targetDepth ?? sourceDepth;
+      const colour =
+        cascade && depth != null && cascade.size > 1
+          ? hot.clone().lerp(far, Math.min(1, (depth - 1) / Math.max(1, Math.max(...cascade.values()))))
+          : null;
+
+      const color = colour ?? (isCompromised ? hot : isHighlighted ? highlight : neutral);
 
       // An arc, sampled in a few steps: a straight line between two towers would
       // pass through whatever stands between them.
@@ -541,8 +561,13 @@ export function DependencyLinks({
         for (const t of [t1, t2]) {
           // Quadratic bezier: endpoints on the rooftops, control point above.
           const oneMinus = 1 - t;
-          const x = oneMinus * oneMinus * placed.from.x + 2 * oneMinus * t * placed.from.x * 0.5 + t * t * placed.to.x;
-          const z = oneMinus * oneMinus * placed.from.z + 2 * oneMinus * t * placed.from.z * 0.5 + t * t * placed.to.z;
+          // Control point at the horizontal midpoint. Using one endpoint as the
+          // control -- which this did -- pulls every arc towards that end, so all
+          // the links in the city bow the same way.
+          const cx = (placed.from.x + placed.to.x) / 2;
+          const cz = (placed.from.z + placed.to.z) / 2;
+          const x = oneMinus * oneMinus * placed.from.x + 2 * oneMinus * t * cx + t * t * placed.to.x;
+          const z = oneMinus * oneMinus * placed.from.z + 2 * oneMinus * t * cz + t * t * placed.to.z;
           const y = oneMinus * oneMinus * placed.from.y + 2 * oneMinus * t * midY + t * t * placed.to.y;
           positions.push(x, y, z);
           colors.push(color.r, color.g, color.b);
@@ -554,7 +579,7 @@ export function DependencyLinks({
     buffer.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     buffer.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     return { geometry: buffer };
-  }, [edges, compromised, selectedId]);
+  }, [edges, compromised, selectedId, cascade]);
 
   // Nothing to draw: an empty buffer still creates an object, which would show up
   // as a dependency layer that exists but explains nothing.
@@ -759,3 +784,109 @@ function InstancedKind({ kind, props }: { kind: string; props: CityModel["scener
   );
 }
 
+
+/**
+ * Propagation rings: one expanding ring per cascade hop, centred on the origin.
+ *
+ * The point is not decoration. A cascade is a sequence -- the hospital is not
+ * affected until the substation is -- and a static red set hides that ordering.
+ * Rings expand outward from the origin and fade, so the depth of any given asset is
+ * visible as distance from the centre rather than as a number in a table.
+ *
+ * Drawn as a single instanced ring mesh: one draw call no matter how deep the
+ * cascade goes. Nothing here changes colour on its own; the caller decides whether
+ * the overlay is live, hypothetical or historical.
+ */
+export function PropagationRings({
+  origin,
+  maxDepth,
+  enabled,
+  reducedMotion = false,
+}: {
+  /** Centre of the cascade, in scene coordinates, with its height. */
+  origin: { x: number; y: number; z: number } | null;
+  maxDepth: number;
+  enabled: boolean;
+  reducedMotion?: boolean;
+}) {
+  const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const materialRef = useRef<THREE.MeshBasicMaterial | null>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const rings = Math.max(0, Math.min(maxDepth, 6));
+
+  useFrame(({ clock }) => {
+    const mesh = meshRef.current;
+    const material = materialRef.current;
+    if (!mesh || !origin || !enabled) return;
+
+    // One ring per hop. Each is offset in phase so the wave travels outward
+    // continuously instead of all hops pulsing together.
+    const period = 3.2;
+    for (let index = 0; index < rings; index += 1) {
+      const phase = reducedMotion ? (index + 1) / rings : ((clock.elapsedTime / period + index / rings) % 1);
+      const radius = 8 + index * 13 + phase * 6;
+      dummy.position.set(origin.x, 0.25, origin.z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.set(radius, radius, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+
+    if (material && !reducedMotion) {
+      // Fade with the wave rather than flashing: a pulse at this size is a
+      // distraction, and a fade reads as spreading.
+      material.opacity = 0.34 + 0.18 * Math.sin(clock.elapsedTime * 1.6);
+    }
+  });
+
+  if (!origin || !enabled || rings === 0) return null;
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, rings]}>
+      {/* A unit annulus: inner radius 0.86 so the ring has visible thickness. */}
+      <ringGeometry args={[0.86, 1, 48]} />
+      <meshBasicMaterial
+        ref={materialRef}
+        color="#ff8a5c"
+        transparent
+        opacity={0.4}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </instancedMesh>
+  );
+}
+
+/**
+ * The origin marker: a taller, brighter column on the asset the cascade started at.
+ *
+ * Without it every failed asset looks equally responsible, and the one asset whose
+ * loss started the whole thing is indistinguishable from the twelve downstream of
+ * it.
+ */
+export function CascadeOrigin({
+  position,
+  enabled,
+}: {
+  position: { x: number; y: number; z: number } | null;
+  enabled: boolean;
+}) {
+  const meshRef = useRef<THREE.Mesh | null>(null);
+
+  useFrame(({ clock }) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    // Slow bob, so the eye finds it in a scene of static buildings.
+    mesh.position.y = (position?.y ?? 0) + 1.2 + Math.sin(clock.elapsedTime * 1.8) * 0.35;
+  });
+
+  if (!position || !enabled) return null;
+
+  return (
+    <mesh ref={meshRef} position={[position.x, position.y + 1.2, position.z]}>
+      <cylinderGeometry args={[0.5, 0.9, 14, 12, 1, true]} />
+      <meshBasicMaterial color="#ff5d5d" transparent opacity={0.42} side={THREE.DoubleSide} depthWrite={false} />
+    </mesh>
+  );
+}

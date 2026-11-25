@@ -9,6 +9,7 @@ import {
   buildTrafficLanes,
   buildZoneHulls,
   cameraPose,
+  cascadeDepths,
   clampTarget,
   fitPose,
   focusPose,
@@ -478,6 +479,51 @@ describe("camera", () => {
 });
 
 /* ------------------------------------------------------------------- model */
+
+describe("cascade depth", () => {
+  const edges = [
+    { source: 1, target: 2 },
+    { source: 1, target: 3 },
+    { source: 2, target: 4 },
+    { source: 4, target: 5 },
+    // A separate branch, unrelated to the origin.
+    { source: 7, target: 8 },
+  ];
+
+  it("measures hops out from the origin", () => {
+    const depths = cascadeDepths(edges, [2, 3, 4, 5], 1);
+    expect(depths.get(1)).toBe(0);
+    expect(depths.get(2)).toBe(1);
+    expect(depths.get(3)).toBe(1);
+    expect(depths.get(4)).toBe(2);
+    // Longest path, not shortest: 5 is reached through 2 then 4, so it is three
+    // hops out even though a shorter chain to it does not exist.
+    expect(depths.get(5)).toBe(3);
+  });
+
+  it("leaves out assets a path reaches but the run did not touch", () => {
+    // A dependency path is not a prediction. If the engine stopped before
+    // cascading to 5, drawing it as part of the cascade would overstate the result.
+    const depths = cascadeDepths(edges, [2, 4], 1);
+    expect(depths.has(5)).toBe(false);
+    expect(depths.has(8)).toBe(false);
+  });
+
+  it("returns nothing without an origin", () => {
+    expect(cascadeDepths(edges, [2], null).size).toBe(0);
+  });
+
+  it("does not loop on a cycle in the dependency graph", () => {
+    const cyclic = [
+      { source: 1, target: 2 },
+      { source: 2, target: 3 },
+      { source: 3, target: 1 },
+    ];
+    const depths = cascadeDepths(cyclic, [2, 3], 1);
+    expect(depths.get(3)).toBe(2);
+    expect(depths.size).toBe(3);
+  });
+});
 
 describe("camera framing", () => {
   it("frames the whole city in a narrow viewport by pulling back further", () => {

@@ -24,6 +24,7 @@ import {
   CITY_BOUNDS,
   buildCityModel,
   cameraPose,
+  cascadeDepths,
   clampTarget,
   fitPose,
   focusPose,
@@ -36,10 +37,12 @@ import {
 import type { Impact, TwinGraph, TwinNode } from "@/lib/types";
 import { Building } from "@/components/city3d/buildings";
 import {
+  CascadeOrigin,
   DependencyLinks,
   EmergencyTraffic,
   Ground,
   Markings,
+  PropagationRings,
   Roads,
   Scenery,
   Traffic,
@@ -52,6 +55,17 @@ export type Quality = "high" | "balanced" | "low";
 export interface City3DOverlay {
   /** Planned impacts from a simulation playback. Never persisted. */
   impacts?: Impact[];
+  /**
+   * The asset a simulation started from, so the cascade can be drawn outward from
+   * its origin rather than as a set of equally-bad buildings.
+   */
+  originId?: number | null;
+  /**
+   * What kind of thing the overlay is showing. A hypothetical cascade and a
+   * recorded one look identical in the geometry, and confusing the two is the most
+   * consequential mistake this view can make, so the caller has to say which.
+   */
+  scenario?: "live" | "hypothetical" | "historical" | "proposed";
   /** Ids currently shown as recovering (approved plan, tasks not yet verified). */
   recovering?: number[];
   /** Zone resilience scores, for the heatmap overlay. */
@@ -66,6 +80,34 @@ export interface City3DOverlay {
    */
   intensity?: Map<number, { value: number; emphasis?: boolean }>;
 }
+
+/**
+ * The words each overlay kind is labelled with.
+ *
+ * Kept next to the overlay type rather than in the page, because the point of the
+ * label is that it cannot drift from the data it describes.
+ */
+export const SCENARIO_LABELS: Record<
+  NonNullable<City3DOverlay["scenario"]>,
+  { heading: string; detail: string }
+> = {
+  live: {
+    heading: "Live",
+    detail: "Drawn from the current state of the model.",
+  },
+  hypothetical: {
+    heading: "Hypothetical",
+    detail: "A simulated cascade. Nothing here is happening, and nothing is saved.",
+  },
+  historical: {
+    heading: "Recorded",
+    detail: "A past simulation, replayed against today's assets.",
+  },
+  proposed: {
+    heading: "Proposed",
+    detail: "Planned work. Not yet in effect; live state is unchanged.",
+  },
+};
 
 export interface City3DProps {
   graph: TwinGraph | null;
@@ -161,6 +203,33 @@ export function City3D(props: City3DProps) {
   }, [overlay?.impacts]);
 
   const recovering = useMemo(() => new Set(overlay?.recovering ?? []), [overlay?.recovering]);
+
+  /**
+   * Propagation depth, per asset, from the run's origin. Computed in the model so it
+   * can be tested against a real cascade rather than only against a screenshot.
+   */
+  const cascadeDepth = useMemo(
+    () =>
+      cascadeDepths(
+        model?.edges.map((placed) => ({
+          source: placed.edge.source,
+          target: placed.edge.target,
+        })) ?? [],
+        overlay?.impacts?.map((impact) => impact.asset_id) ?? [],
+        overlay?.originId ?? null,
+      ),
+    [model, overlay?.originId, overlay?.impacts],
+  );
+
+  const originAsset = useMemo(
+    () => (overlay?.originId != null ? model?.assets.find((asset) => asset.node.id === overlay.originId) ?? null : null),
+    [model, overlay?.originId],
+  );
+
+  const maxDepth = useMemo(
+    () => [...cascadeDepth.values()].reduce((max, depth) => Math.max(max, depth), 0),
+    [cascadeDepth],
+  );
 
   /** Status per asset, resolved once per render pass. */
   const intensity = overlay?.intensity;
@@ -374,10 +443,22 @@ export function City3D(props: City3DProps) {
             />
           ))}
 
+          <PropagationRings
+            origin={originAsset ? { ...originAsset.position, y: originAsset.footprint.height } : null}
+            maxDepth={maxDepth}
+            enabled={Boolean(overlay?.impacts?.length && overlay?.originId != null)}
+            reducedMotion={reducedMotion}
+          />
+          <CascadeOrigin
+            position={originAsset ? { ...originAsset.position, y: originAsset.footprint.height } : null}
+            enabled={Boolean(overlay?.impacts?.length && overlay?.originId != null)}
+          />
+
           <DependencyLinks
             edges={model.edges}
             show={showEdges}
             compromised={compromised}
+            cascade={cascadeDepth}
             selectedId={selectedId}
             onSelect={(id) => {
               const node = graph?.nodes.find((candidate) => candidate.id === id) ?? null;

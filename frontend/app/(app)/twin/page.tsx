@@ -108,7 +108,17 @@ export default function TwinPage() {
 
   const overlay = useMemo<City3DOverlay>(() => {
     const result: City3DOverlay = {};
+    // A replay is a recorded run, so it is "historical" even though it plays in the
+    // present tense: the assets are today's, the cascade is not.
+    if (replayRunId != null) result.scenario = "historical";
+
+    // Timeline frames are maintenance overrides built from the API's own history.
+    if (timeline.data && timelineIndex !== null && replayRunId == null) result.scenario = "historical";
+
     if (replayLevels.size > 0) {
+      // The cascade is drawn from whichever assets the run started at. A run can
+      // fail several at once; the first is the origin the rings expand from.
+      result.originId = replayDetail.data?.initial_failure_ids?.[0] ?? null;
       result.impacts = [...replayLevels].map(([assetId, level]) => ({
         asset_id: assetId,
         impact_level: level,
@@ -155,7 +165,19 @@ export default function TwinPage() {
       result.recovering = [...frame.maintenance];
     }
     return result;
-  }, [replayLevels, heatOn, heatmap.data, timeline.data, timelineIndex, data, lens, criticality.data, investment.data]);
+  }, [
+    replayLevels,
+    replayRunId,
+    replayDetail.data,
+    heatOn,
+    heatmap.data,
+    timeline.data,
+    timelineIndex,
+    data,
+    lens,
+    criticality.data,
+    investment.data,
+  ]);
 
   // Stable identity: the replay panel pushes a frame per animation tick, and a new
   // callback each render would re-run its effect on every frame.
