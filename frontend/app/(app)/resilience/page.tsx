@@ -801,6 +801,8 @@ function TradeoffsTab({ canPlan }: { canPlan: boolean }) {
         )}
       </Panel>
 
+      {data && data.plans.length > 1 ? <Tradeoff data={data} /> : null}
+
       {data ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {data.plans.map((plan, index) => (
@@ -1411,5 +1413,59 @@ export default function ResiliencePage() {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * The trade-off, named.
+ *
+ * A frontier is a set of plans that are each unbeaten on something; the table of
+ * cards leaves the reader to work out which is which. Naming the cheapest and the
+ * highest-coverage plan, and saying what each gives up, is the whole argument in
+ * two sentences -- and it refuses to invent a single "best", because there is not
+ * one.
+ */
+function Tradeoff({ data }: { data: FrontierResponse }) {
+  const cheapest = [...data.plans].sort((a, b) => a.objectives.cost - b.objectives.cost)[0];
+  const most = [...data.plans].sort((a, b) => b.coverage_percent - a.coverage_percent)[0];
+
+  // The cheapest plan may also be the most complete one, in which case there is no
+  // trade-off to describe and inventing one would be worse than saying nothing.
+  const sameRow = cheapest.direction === most.direction;
+
+  return (
+    <Panel>
+      <PanelHeader
+        title="The trade-off"
+        subtitle="What the cheapest plan gives up"
+        icon={<TriangleAlert className="h-4 w-4" />}
+      />
+      {sameRow ? (
+        <p className="text-xs leading-relaxed text-ink-300">
+          One plan is both the cheapest and the most complete: <strong>{cheapest.direction}</strong>,
+          covering {cheapest.coverage_percent.toFixed(0)}% of demand for{" "}
+          {formatNumber(cheapest.objectives.cost)}. On this demand set there is no trade-off to make.
+        </p>
+      ) : (
+        <div className="space-y-2 text-xs leading-relaxed text-ink-300">
+          <p>
+            <strong>{cheapest.direction}</strong> is the cheapest at{" "}
+            {formatNumber(cheapest.objectives.cost)}, but covers{" "}
+            {(most.coverage_percent - cheapest.coverage_percent).toFixed(0)} points less demand
+            ({cheapest.coverage_percent.toFixed(0)}% against {most.coverage_percent.toFixed(0)}%).
+          </p>
+          <p>
+            <strong>{most.direction}</strong> protects {formatNumber(most.served_population)} people
+            against {formatNumber(cheapest.served_population)}, for{" "}
+            {formatNumber(most.objectives.cost - cheapest.objectives.cost)} more.
+          </p>
+          <p className="text-[11px] text-ink-500">
+            Neither is the answer. Which one is right depends on whether the budget or the uncovered
+            demand is the binding constraint, and that is a decision this page does not make. Nothing
+            here is committed until a plan is approved elsewhere.
+          </p>
+        </div>
+      )}
+    </Panel>
   );
 }

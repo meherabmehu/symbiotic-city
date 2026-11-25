@@ -323,4 +323,115 @@ test.describe("3d city", () => {
     await expect(page.getByRole("button", { name: "Top-down" })).toBeVisible();
     await expect(page.getByRole("button", { name: /reset view/i })).toBeVisible();
   });
+
+  test("keeps the whole city in frame when the panel changes size", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    await expect(page.locator("canvas").first()).toBeVisible({ timeout: 20_000 });
+
+    // "Fit city" is a counter, not a toggle, so pressing it twice must frame twice
+    // rather than turn itself off the first time.
+    const fit = page.getByRole("button", { name: /fit city/i });
+    await expect(fit).toBeVisible();
+    await fit.click();
+    await fit.click();
+
+    // Expanding the panel changes the viewport; the scene must survive it.
+    await page.getByRole("button", { name: /expand/i }).click();
+    await expect(page.locator("canvas").first()).toBeVisible();
+  });
+
+  test("moves the camera from the keyboard, not only the pointer", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    const canvas = page.locator("canvas").first();
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+
+    // The canvas cannot take focus, so the wrapper does. Everything here duplicates
+    // a pointer gesture; none of it is the only way to do something.
+    const view = page.getByRole("application", { name: /city view/i });
+    await expect(view).toBeVisible();
+    await view.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("PageUp");
+
+    // Switching presets from the keyboard must move the toolbar's selection too, or
+    // the button state would say one thing and the camera another.
+    await page.keyboard.press("3");
+    await expect(page.getByRole("button", { name: "Top-down" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("compares two stored runs and names the difference", async ({ page }) => {
+    await login(page, "analyst");
+
+    // Two runs, created here. The suite runs against a throwaway database with no
+    // simulation history, so a comparison panel would otherwise only ever render its
+    // "two runs are needed" notice -- and the test would be asserting that instead of
+    // the comparison, while still passing.
+    const csrfToken =
+      (await page
+        .context()
+        .cookies()
+        .then((cookies) => cookies.find((cookie) => cookie.name === "symbiotic_csrf")?.value)) ?? "";
+
+    // Deliberately different origins, so the comparison has something to say. Two
+    // runs from the same origin would produce "exactly the same" and prove nothing
+    // about the diff.
+    for (const [origin, name] of [
+      [1, "E2E compare A"],
+      [4, "E2E compare B"],
+    ] as const) {
+      const created = await page.request.post("/api/simulations/run", {
+        headers: { "X-CSRF-Token": csrfToken },
+        data: { initial_failure_ids: [origin], failure_mode: "total_failure", name },
+      });
+      expect(created.ok(), `simulation run failed: ${created.status()}`).toBe(true);
+    }
+
+    await page.goto("/twin");
+    await expectShell(page);
+
+    const heading = page.getByRole("heading", { name: /compare two runs/i });
+    await expect(heading).toBeAttached();
+    await heading.scrollIntoViewIfNeeded();
+
+    const runA = page.getByRole("combobox", { name: /first run to compare/i });
+    await expect(runA).toBeVisible({ timeout: 40_000 });
+
+    const options = await runA.locator("option").count();
+    // One placeholder plus the two runs just created.
+    expect(options).toBeGreaterThanOrEqual(3);
+
+    await runA.selectOption({ index: 1 });
+    await page.getByRole("combobox", { name: /second run to compare/i }).selectOption({ index: 2 });
+
+    // The verdict, not merely a table: two different origins must produce a
+    // statement about which is worse, and the panel must not answer with silence.
+    await expect(
+      page.getByText(/exactly the same|trades nothing|strictly worse|Neither run dominates/i),
+    ).toBeVisible({ timeout: 30_000 });
+  });
+
+  test("reports the measured cost of the scene rather than a claim", async ({ page }) => {
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    await expect(page.locator("canvas").first()).toBeVisible({ timeout: 20_000 });
+
+    const stats = page.getByTestId("city3d-stats");
+    await expect(stats).toBeVisible({ timeout: 20_000 });
+    // Collapsed by default: the numbers are available, not in the way.
+    await stats.locator("summary").click();
+    // `exact` is required: the summary line above also contains "draw calls", so a
+    // substring match resolves to two elements and fails on strictness.
+    await expect(stats.getByText("Draw calls", { exact: true })).toBeVisible();
+    await expect(stats.getByText("Materials", { exact: true })).toBeVisible();
+    // The panel says where its numbers come from rather than presenting them bare.
+    await expect(stats.getByText(/read from three\.js/i)).toBeVisible();
+  });
 });

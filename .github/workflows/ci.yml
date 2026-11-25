@@ -77,6 +77,12 @@ jobs:
           node-version: "20.19"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # npm 10 (the version bundled with Node 20) crashes with "Cannot read
+      # properties of null (reading 'edgesOut')" while resolving vitest's optional
+      # browser-mode peers, leaving node_modules half-written. That is what made a
+      # declared dependency read as "Module not found" in a clean install. npm 11
+      # resolves the same lockfile without crashing.
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npm run typecheck
       # The 3D twin's layout, status and replay maths, and the scene-graph tests
@@ -115,6 +121,7 @@ jobs:
           python -m venv .venv
           .venv/bin/pip install -r backend/requirements.txt
           test -x .venv/bin/python
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       # Do not fail the step here: the report must be summarised even when the

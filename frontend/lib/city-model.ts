@@ -435,7 +435,129 @@ export function vehiclePosition(
   if (lane.axis === "h") {
     return { x: signed, z: lane.at + lane.offset, angle: lane.direction > 0 ? 0 : Math.PI };
   }
-  return { x: lane.at + lane.offset, z: signed, angle: lane.direction > 0 ? Math.PI / 2 : -Math.PI / 2 };
+
+  // A vehicle's local +x is its forward axis, and rotating that by `angle` about Y
+  // gives (cos angle, 0, -sin angle). Driving +z therefore needs angle -pi/2, not
+  // +pi/2 -- with the sign flipped, northbound traffic drives backwards.
+  return {
+    x: lane.at + lane.offset,
+    z: signed,
+    angle: lane.direction > 0 ? -Math.PI / 2 : Math.PI / 2,
+  };
+}
+
+/* ------------------------------------------------------- turning traffic */
+
+export interface RouteWaypoint {
+  x: number;
+  z: number;
+}
+
+/**
+ * A closed circuit that turns at intersections.
+ *
+ * The lane system moves vehicles in straight lines forever, which is fine for
+ * traffic at a glance and wrong the moment you watch one: no vehicle ever turns,
+ * so every street is a conveyor belt. A route is a rectangle around a block --
+ * four straights joined by corner arcs -- which is what a car circling a block
+ * actually does, and it is why the traffic reads as going somewhere.
+ *
+ * Corners are sampled as short arcs rather than sharp joins so the vehicle's
+ * heading changes smoothly instead of snapping through ninety degrees.
+ */
+export function buildRoutes(grid: RoadGrid): RouteWaypoint[][] {
+  const routes: RouteWaypoint[][] = [];
+  const xs = [...new Set(grid.segments.filter((s) => Math.abs(s.x2 - s.x1) < 0.001).map((s) => s.x1))].sort(
+    (a, b) => a - b,
+  );
+  const zs = [...new Set(grid.segments.filter((s) => Math.abs(s.z2 - s.z1) < 0.001).map((s) => s.z1))].sort(
+    (a, b) => a - b,
+  );
+
+  // Only blocks with a real street on each side are worth circulating.
+  for (let xi = 0; xi < xs.length - 1; xi += 1) {
+    for (let zi = 0; zi < zs.length - 1; zi += 1) {
+      const x0 = xs[xi];
+      const x1 = xs[xi + 1];
+      const z0 = zs[zi];
+      const z1 = zs[zi + 1];
+      if (x1 - x0 < 20 || z1 - z0 < 20) continue;
+
+      // Circulate on the right-hand side of each street, which is what makes the
+      // loop legal traffic rather than a rally circuit.
+      const inset = 1.6;
+      const route: RouteWaypoint[] = [];
+      const corners: [number, number, number][] = [
+        [x0 + inset, z0 + inset, 0],
+        [x1 - inset, z0 + inset, -Math.PI / 2],
+        [x1 - inset, z1 - inset, Math.PI],
+        [x0 + inset, z1 - inset, Math.PI / 2],
+      ];
+
+      for (let c = 0; c < corners.length; c += 1) {
+        const [cx, cz] = corners[c];
+        const [nx, nz] = corners[(c + 1) % corners.length];
+        // Straight run to the next corner, sampled every few units.
+        const dx = nx - cx;
+        const dz = nz - cz;
+        const length = Math.hypot(dx, dz);
+        const steps = Math.max(2, Math.round(length / 4));
+        for (let step = 0; step < steps; step += 1) {
+          const t = step / steps;
+          route.push({ x: cx + dx * t, z: cz + dz * t });
+        }
+      }
+      // Only keep blocks whose loop is long enough to be worth watching a car go
+      // round; a tiny loop reads as a bug.
+      if (route.length > 12) routes.push(route);
+    }
+  }
+
+  return routes;
+}
+
+/** Position and heading along a closed route, wrapped at both ends. */
+export function routePosition(
+  route: RouteWaypoint[],
+  t: number,
+  speed: number,
+  progress: number,
+): { x: number; z: number; angle: number } {
+  if (route.length < 2) return { x: 0, z: 0, angle: 0 };
+
+  // Arc length, so speed is constant through corners instead of proportional to
+  // the number of sampled points.
+  const lengths: number[] = [];
+  let total = 0;
+  for (let index = 0; index < route.length; index += 1) {
+    const a = route[index];
+    const b = route[(index + 1) % route.length];
+    const step = Math.hypot(b.x - a.x, b.z - a.z);
+    lengths.push(step);
+    total += step;
+  }
+  if (total <= 0) return { x: route[0].x, z: route[0].z, angle: 0 };
+
+  const travelled = (((progress * total + t * speed) % total) + total) % total;
+
+  let walked = 0;
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (walked + lengths[index] >= travelled) {
+      const t0 = (travelled - walked) / (lengths[index] || 1);
+      const a = route[index];
+      const b = route[(index + 1) % route.length];
+      const x = a.x + (b.x - a.x) * t0;
+      const z = a.z + (b.z - a.z) * t0;
+      // Heading from the segment direction, using the same convention as
+      // `vehiclePosition`: forward is (cos angle, -sin angle) in world space.
+      const angle = Math.atan2(-(b.z - a.z), b.x - a.x);
+      return { x, z, angle };
+    }
+    walked += lengths[index];
+  }
+
+  const last = route[route.length - 1];
+  return { x: last.x, z: last.z, angle: 0 };
 }
 
 /* ----------------------------------------------------------- status model */
@@ -633,6 +755,52 @@ export function focusPose(position: Point3, footprint: Footprint): CameraPose {
   };
 }
 
+/**
+ * A pose that frames an incident.
+ *
+ * Deliberately not the same as `focusPose`: an incident is about the asset *and*
+ * the streets around it, because the consequence of a failure is what reaches
+ * along the dependency links. So the camera pulls back further and looks down a
+ * little more, and the target sits below the building rather than at its middle.
+ */
+export function incidentPose(position: Point3, footprint: Footprint): CameraPose {
+  const distance = Math.max(footprint.height * 3.4, 34);
+  return {
+    position: [
+      position.x + distance * 0.72,
+      footprint.height + distance * 0.82,
+      position.z + distance * 0.72,
+    ],
+    target: [position.x, footprint.height * 0.3, position.z],
+  };
+}
+
+/**
+ * The pose that fits the whole city, honouring the aspect ratio.
+ *
+ * A fixed distance works for a wide window and crops the model in a tall one. This
+ * measures what is actually in front of the camera: the city is `CITY_EXTENT *
+ * 2` across, so the distance needed is that half-width divided by the tangent of
+ * the half field of view -- using the *narrower* of the vertical and horizontal
+ * fields of view, which is the one that would crop first.
+ */
+export function fitPose(mode: CameraMode, aspect: number, fovDegrees = 42): CameraPose {
+  const halfWidth = CITY_EXTENT * 1.08;
+  const vertical = (fovDegrees * Math.PI) / 180;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * Math.max(aspect, 0.2));
+  const halfAngle = Math.min(vertical, horizontal) / 2;
+  const distance = halfWidth / Math.tan(halfAngle);
+
+  // Keep the preset's viewing direction and move along it, so fitting from the
+  // top-down preset does not quietly become an isometric view.
+  const [bx, by, bz] = cameraPose(mode).position;
+  const length = Math.hypot(bx, by, bz) || 1;
+  return {
+    position: [(bx / length) * distance, (by / length) * distance, (bz / length) * distance],
+    target: [0, 0, 0],
+  };
+}
+
 /** Clamp an orbit target inside the city so panning cannot lose the model. */
 export function clampTarget(target: [number, number, number]): [number, number, number] {
   const limit = CITY_BOUNDS.panLimit;
@@ -646,7 +814,9 @@ export function clampTarget(target: [number, number, number]): [number, number, 
 /* ------------------------------------------------------------ scene props */
 
 export interface ScatterProp {
-  kind: "tree" | "car" | "bench" | "lamp";
+  // No "car": a static vehicle placed by a scatter algorithm is either abandoned
+  // or in the road. Moving traffic is drawn separately as instanced geometry.
+  kind: "tree" | "bench" | "lamp";
   position: Point3;
   rotation: number;
   scale: number;
@@ -659,41 +829,264 @@ export interface ScatterProp {
  * makes "decorative vs operational" a structural guarantee rather than a naming
  * convention: nothing in the scene can select a tree and read a status from it.
  */
-export function buildScenery(nodes: TwinNode[], grid: RoadGrid, count = 220): ScatterProp[] {
+/**
+ * Street furniture, scattered on the land the roads and plots leave free.
+ *
+ * Three things matter here and all three were wrong at some point:
+ *
+ *  - The plots come from the *placed* assets. Reading raw `map_x`/`map_y` puts
+ *    trees inside buildings whose plots were moved apart by `separatePlots`.
+ *  - Nothing may sit on a carriageway. A tree in the middle of an avenue is the
+ *    most obvious tell that a city is decoration.
+ *  - Lamps and trees go *beside* roads, not scattered uniformly. Street furniture
+ *    at random looks like litter; street furniture lining a kerb looks like a
+ *    street. Roads are the generator, so each prop is placed relative to one.
+ *
+ * Cars are not scenery. A parked car in a random field is not a thing that
+ * exists; moving traffic is drawn separately and carries no asset data.
+ */
+export function buildScenery(assets: PlacedAsset[], grid: RoadGrid, count = 320): ScatterProp[] {
   const rng = makeRng(0xc0ffee);
-  const plots = nodes.map((node) => {
-    const { x, z } = toScene(node.map_x, node.map_y);
-    return { x, z, half: footprintFor(node.category).plot / 2 + 1.5 };
-  });
+  const plots = assets.map((asset) => ({
+    x: asset.position.x,
+    z: asset.position.z,
+    half: asset.footprint.plot / 2 + 1.2,
+  }));
+
+  const insidePlot = (x: number, z: number) =>
+    plots.some((plot) => Math.abs(plot.x - x) < plot.half && Math.abs(plot.z - z) < plot.half);
+
+  /** Distance from a point to the nearest carriageway edge, or Infinity. */
+  const clearOfRoads = (x: number, z: number, margin: number) =>
+    grid.segments.every((segment) => {
+      const horizontal = Math.abs(segment.z1 - segment.z2) < 0.001;
+      const across = horizontal
+        ? Math.abs(z - segment.z1) - segment.width / 2
+        : Math.abs(x - segment.x1) - segment.width / 2;
+      // Only the road's own span constrains the point; beyond its ends there is no
+      // carriageway to avoid.
+      const along = horizontal
+        ? x >= Math.min(segment.x1, segment.x2) - 2 && x <= Math.max(segment.x1, segment.x2) + 2
+        : z >= Math.min(segment.z1, segment.z2) - 2 && z <= Math.max(segment.z1, segment.z2) + 2;
+      return !along || across > margin;
+    });
 
   const props: ScatterProp[] = [];
-  let attempts = 0;
-  while (props.length < count && attempts < count * 40) {
-    attempts += 1;
-    const x = (rng() * 2 - 1) * CITY_EXTENT * 0.97;
-    const z = (rng() * 2 - 1) * CITY_EXTENT * 0.97;
-    if (plots.some((plot) => Math.abs(plot.x - x) < plot.half && Math.abs(plot.z - z) < plot.half)) {
-      continue;
-    }
-    // Keep off the carriageway.
-    const onRoad = grid.segments.some((segment) => {
-      const horizontal = Math.abs(segment.z1 - segment.z2) < 0.001;
-      return horizontal
-        ? Math.abs(z - segment.z1) < segment.width / 2 + 1.2
-        : Math.abs(x - segment.x1) < segment.width / 2 + 1.2;
-    });
-    if (onRoad) continue;
+  const push = (kind: ScatterProp["kind"], x: number, z: number, scale: number, rotation: number) => {
+    if (Math.abs(x) > CITY_EXTENT * 0.97 || Math.abs(z) > CITY_EXTENT * 0.97) return;
+    if (insidePlot(x, z)) return;
+    props.push({ kind, position: { x, y: 0, z }, rotation, scale });
+  };
 
-    const roll = rng();
-    const kind: ScatterProp["kind"] = roll < 0.62 ? "tree" : roll < 0.85 ? "car" : roll < 0.95 ? "bench" : "lamp";
-    props.push({
-      kind,
-      position: { x, y: 0, z },
-      rotation: rng() * Math.PI * 2,
-      scale: 0.7 + rng() * 0.6,
-    });
+  // Street furniture follows the kerbs: a lamp or a tree every few units along
+  // each avenue, alternating sides so neither side is bare.
+  for (const segment of grid.segments) {
+    const horizontal = Math.abs(segment.z1 - segment.z2) < 0.001;
+    const length = horizontal
+      ? Math.abs(segment.x2 - segment.x1)
+      : Math.abs(segment.z2 - segment.z1);
+    const start = horizontal ? Math.min(segment.x1, segment.x2) : Math.min(segment.z1, segment.z2);
+    const step = 7.5;
+
+    for (let offset = step; offset < length - step; offset += step) {
+      // Alternate sides, and jitter slightly so the line is not mechanically even.
+      const side = Math.round(offset / step) % 2 === 0 ? 1 : -1;
+      const jitter = (rng() - 0.5) * 1.2;
+      // One kerb-width clear of the carriageway. The margin is generous because a
+      // prop only has to touch the *edge* of a road to look like it is in it, and
+      // another avenue's carriageway can be closer than this one's centre.
+      const gap = segment.width / 2 + 3.4 + rng() * 0.8;
+      const along = start + offset + jitter;
+
+      const x = horizontal ? along : segment.x1 + side * gap;
+      const z = horizontal ? segment.z1 + side * gap : along;
+
+      if (insidePlot(x, z)) continue;
+      // Verify against *every* avenue, not just the one this slot belongs to: a
+      // perpendicular street can run right through a kerbside spot.
+      if (!clearOfRoads(x, z, 1.5)) continue;
+      // One in four kerbside slots is a streetlight instead of a tree; lights are
+      // what make a night city read as a city.
+      const kind: ScatterProp["kind"] = rng() < 0.34 ? "lamp" : "tree";
+      push(kind, x, z, 0.75 + rng() * 0.45, rng() * Math.PI * 2);
+    }
   }
-  return props;
+
+  // Then parks and squares in the leftover blocks, clusters rather than singles.
+  let clusters = 0;
+  let guard = 0;
+  while (clusters < 26 && guard < 600) {
+    guard += 1;
+    const cx = (rng() * 2 - 1) * CITY_EXTENT * 0.9;
+    const cz = (rng() * 2 - 1) * CITY_EXTENT * 0.9;
+    if (insidePlot(cx, cz) || !clearOfRoads(cx, cz, 3)) continue;
+
+    clusters += 1;
+    const size = 4 + Math.floor(rng() * 6);
+    const radius = 4 + rng() * 5;
+    for (let index = 0; index < size; index += 1) {
+      const angle = rng() * Math.PI * 2;
+      const distance = Math.sqrt(rng()) * radius;
+      const x = cx + Math.cos(angle) * distance;
+      const z = cz + Math.sin(angle) * distance;
+      if (!clearOfRoads(x, z, 1.6)) continue;
+      push("tree", x, z, 0.7 + rng() * 0.7, rng() * Math.PI * 2);
+    }
+    // A bench or two facing the green.
+    if (rng() < 0.6) push("bench", cx + radius * 0.3, cz, 1, rng() * Math.PI * 2);
+  }
+
+  return props.slice(0, count);
+}
+
+/* ----------------------------------------------------------------- cascade */
+
+/**
+ * Hop count from a cascade's origin to every asset it reaches.
+ *
+ * The simulation API returns a `depth` per impact, but a depth on its own does not
+ * say which asset started the cascade -- and the scene needs that, both to mark the
+ * origin and to draw the propagation outward from it. Walking the dependency graph
+ * breadth-first from the origin gives both, and gives them from data the client
+ * already has.
+ *
+ * Only assets the run actually reported as impacted are kept: an asset downstream
+ * of the origin that the run did not touch must not be drawn as part of the
+ * cascade just because a path exists through it.
+ */
+export function cascadeDepths(
+  edges: { source: number; target: number }[],
+  impacted: Iterable<number>,
+  originId: number | null,
+): Map<number, number> {
+  const depths = new Map<number, number>();
+  if (originId == null) return depths;
+
+  const touched = new Set(impacted);
+  depths.set(originId, 0);
+
+  const queue: number[] = [originId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const next = (depths.get(current) ?? 0) + 1;
+    for (const edge of edges) {
+      if (edge.source !== current) continue;
+      if (depths.has(edge.target)) continue;
+      depths.set(edge.target, next);
+      queue.push(edge.target);
+    }
+  }
+
+  for (const id of [...depths.keys()]) {
+    if (id !== originId && !touched.has(id)) depths.delete(id);
+  }
+  return depths;
+}
+
+/* --------------------------------------------------------------- sidewalks */
+
+export interface Pavement {
+  /** Centre of the slab. */
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  /** Rotation about Y; pavements run parallel to their avenue. */
+  rotation: number;
+}
+
+/**
+ * Kerbs, as flat strips either side of every avenue.
+ *
+ * A road drawn directly on the ground reads as a painted line, not as a street:
+ * what makes a street legible at this scale is the change of level and colour at
+ * its edge. These are two thin slabs per avenue -- flat, cheap, and they are what
+ * the street furniture actually stands on.
+ *
+ * They stop short of intersections so the crossing stays continuous.
+ */
+export function buildPavements(grid: RoadGrid): Pavement[] {
+  const KERB = 2.6;
+  const pavements: Pavement[] = [];
+
+  for (const segment of grid.segments) {
+    const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+    const from = horizontal
+      ? Math.min(segment.x1, segment.x2)
+      : Math.min(segment.z1, segment.z2);
+    const to = horizontal
+      ? Math.max(segment.x1, segment.x2)
+      : Math.max(segment.z1, segment.z2);
+    const length = to - from;
+    const centre = from + length / 2;
+    const at = horizontal ? segment.z1 : segment.x1;
+    const offset = segment.width / 2 + KERB / 2;
+
+    for (const side of [-1, 1]) {
+      pavements.push({
+        x: horizontal ? centre : at + side * offset,
+        z: horizontal ? at + side * offset : centre,
+        width: horizontal ? length : KERB,
+        depth: horizontal ? KERB : length,
+        rotation: 0,
+      });
+    }
+  }
+
+  return pavements;
+}
+
+/* ----------------------------------------------------------------- parking */
+
+export interface ParkingBay {
+  x: number;
+  z: number;
+  /** Marked bays, arranged in a row. */
+  bays: number;
+  rotation: number;
+}
+
+/**
+ * Parking aprons beside a few streets.
+ *
+ * Not every road: a bay on every kerb would be as monotonous as none. These are
+ * placed where a block has room, which is the same rule a planner would use.
+ */
+export function buildParking(assets: PlacedAsset[], grid: RoadGrid): ParkingBay[] {
+  const rng = makeRng(0x9a12c3);
+  const bays: ParkingBay[] = [];
+
+  for (const segment of grid.segments) {
+    const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+    const length = horizontal
+      ? Math.abs(segment.x2 - segment.x1)
+      : Math.abs(segment.z2 - segment.z1);
+    if (length < 40) continue;
+
+    // Two candidate aprons per avenue, offset from the ends.
+    for (const fraction of [0.28, 0.72]) {
+      if (rng() > 0.55) continue;
+      const start = horizontal ? Math.min(segment.x1, segment.x2) : Math.min(segment.z1, segment.z2);
+      const along = start + length * fraction;
+      const side = rng() < 0.5 ? -1 : 1;
+      const gap = segment.width / 2 + 7;
+
+      const x = horizontal ? along : segment.x1 + side * gap;
+      const z = horizontal ? segment.z1 + side * gap : along;
+
+      // Only where the apron is actually clear of buildings and of the traffic.
+      const clear = assets.every(
+        (asset) =>
+          Math.abs(asset.position.x - x) > asset.footprint.plot / 2 + 3 ||
+          Math.abs(asset.position.z - z) > asset.footprint.plot / 2 + 3,
+      );
+      if (!clear) continue;
+
+      bays.push({ x, z, bays: 3 + Math.floor(rng() * 4), rotation: horizontal ? 0 : Math.PI / 2 });
+    }
+  }
+
+  return bays;
 }
 
 /* ------------------------------------------------------------------ edges */
@@ -732,6 +1125,12 @@ export interface CityModel {
   lanes: TrafficLane[];
   zones: ZoneHull[];
   scenery: ScatterProp[];
+  /** Loops around blocks: traffic that turns at intersections. */
+  routes: RouteWaypoint[][];
+  /** Kerbs beside every avenue: what makes a road read as a street. */
+  pavements: Pavement[];
+  /** Parking aprons where a block has room for one. */
+  parking: ParkingBay[];
 }
 
 /**
@@ -751,6 +1150,9 @@ export function buildCityModel(graph: TwinGraph | null): CityModel | null {
     grid,
     lanes: buildTrafficLanes(grid),
     zones: buildZoneHulls(graph.zones),
-    scenery: buildScenery(graph.nodes, grid),
+    scenery: buildScenery(assets, grid),
+    routes: buildRoutes(grid),
+    pavements: buildPavements(grid),
+    parking: buildParking(assets, grid),
   };
 }

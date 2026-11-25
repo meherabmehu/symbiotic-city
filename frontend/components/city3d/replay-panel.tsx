@@ -156,6 +156,36 @@ export function ReplayPanel({
             </div>
           </div>
 
+          {/* Recovery, as a proportion of what the run broke. Only shown once the
+              cascade has finished: mid-replay, "recovering" would be a claim about
+              work that has not been proposed yet. */}
+          {frame.complete ? (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-ink-400">Recovery progress</span>
+                <span className="text-ink-300">
+                  {detail.summary.assets_failed + detail.summary.assets_degraded === 0
+                    ? "Nothing to recover"
+                    : `0 of ${detail.summary.assets_failed + detail.summary.assets_degraded} restored`}
+                </span>
+              </div>
+              <div
+                className="h-1.5 overflow-hidden rounded-full bg-white/10"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={0}
+                aria-label="Recovery progress for this run"
+              >
+                <div className="h-full w-0 rounded-full bg-mint" />
+              </div>
+              <p className="text-[10px] leading-snug text-ink-600">
+                A stored run records what would fail, not what was repaired. Recovery progress lives
+                with the incident that owns the work, not with the simulation.
+              </p>
+            </div>
+          ) : null}
+
           {frame.complete ? (
             <p className="text-[11px] text-amber">
               <AlertTriangle className="mr-1 inline h-3 w-3" aria-hidden />
