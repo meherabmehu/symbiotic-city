@@ -1,5 +1,7 @@
 "use client";
 
+import { criticalityStats } from "@/lib/criticality";
+
 /**
  * Analytical lenses over the city: criticality, and what an investment would buy.
  *
@@ -120,9 +122,10 @@ function CriticalityList({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone="accent">{criticality.fleet.assets_scored} assets scored</Badge>
+        <Badge tone="accent">{criticalityStats(criticality).scored} assets scored</Badge>
         <span className="text-[10px] text-ink-500">
-          mean {criticality.fleet.mean_index.toFixed(1)} · peak {criticality.fleet.max_index.toFixed(1)}
+          mean {criticalityStats(criticality).mean.toFixed(1)} · peak{" "}
+          {criticalityStats(criticality).peak.toFixed(1)}
         </span>
       </div>
       <ul className="max-h-56 space-y-1 overflow-y-auto">
