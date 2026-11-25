@@ -140,8 +140,12 @@ export default function AuditPage() {
 
       {entries.error ? <Alert tone="danger" title="Could not load the audit log">{entries.error}</Alert> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_290px]">
-        <Panel>
+      {/* minmax(0,1fr), not 1fr: a `1fr` track is minmax(auto,1fr), so the
+          table column refuses to go below the table's min-width and pushes the
+          grid, and the page, wider than the viewport. The table then has
+          nothing to scroll inside. */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+        <Panel className="min-w-0">
           <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <div className="lg:col-span-2">
               <SearchInput value={search} onChange={setSearch} placeholder="Search actor, action or message…" label="Search audit log" />

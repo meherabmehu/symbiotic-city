@@ -9,13 +9,14 @@
 
 | ধাপ | ফলাফল |
 | --- | --- |
-| `git clone` (পাবলিক, লগইন ছাড়া) | `e909d0a` — নতুন কোড সব এসেছে |
+| `git clone` (পাবলিক, লগইন ছাড়া) | `9977880` — নতুন কোড সব এসেছে |
 | venv + `pip install` | সফল |
-| `npm install` | সফল |
+| `npm install` | সফল, `npm audit` — **০টা vulnerability** |
 | `.env` ছাড়া চালু (ডিফল্ট SQLite) | ২৩টা asset, ৫টা zone নিজে থেকে সিড হয়েছে |
-| `./scripts/dev.sh` | API `:8000` উঠেছে, আসল ডেটা দিয়েছে (PS-02 = 84.3) |
+| `./scripts/dev.sh` | API `:8000`, web `:3000` উঠেছে, আসল ডেটা দিয়েছে (PS-02 = 84.3) |
 | `python scripts/smoke.py` | সব চেক পাশ |
-| `./scripts/verify.sh` | **269 passed, 10 skipped**, typecheck ও build পাশ |
+| `./scripts/verify.sh` | **277 passed, 10 skipped**, typecheck ও build পাশ |
+| ব্রাউজার টেস্ট (CI-তে Playwright) | **৭১টা টেস্ট, সব পাশ** — লগইন, সাইন-আউট, প্রতিটা স্ক্রিন, মোবাইল লেআউট |
 | `alembic upgrade head` | দুটো migration-ই চলেছে, whatif টেবিল তৈরি |
 
 ধরুন আপনি কিছুই ইনস্টল করা নেই এমন একটা ল্যাপটপে বসে আছেন।
@@ -27,7 +28,7 @@
 | জিনিস | ভার্সন | কেন |
 | --- | --- | --- |
 | Python | **৩.১১ বা তার বেশি** | backend (FastAPI + OR-Tools) |
-| Node.js | **২০ বা তার বেশি** | frontend (Next.js 15 + React 19) |
+| Node.js | **২০.৯ বা তার বেশি** | frontend (Next.js 16 + React 19) |
 | Git | যেকোনো | কোড নামাতে |
 | ইন্টারনেট | একবারই | pip আর npm প্যাকেজ নামাতে |
 
@@ -39,13 +40,14 @@
 
 ```bash
 python3 --version     # Python 3.11.x বা বেশি
-node --version        # v20.x বা বেশি
+node --version        # v20.9 বা বেশি (Next.js 16-এর শর্ত)
 npm --version
 ```
 
 > **Windows ব্যবহার করলে** — পুরো সেকশন আছে নিচে: **[উইন্ডোজ / PowerShell](#উইন্ডোজ--powershell)**।
 > সংক্ষেপে: PowerShell 5.1-এ `&&` চলে না, তাই নিচের bash কমান্ডগুলো হুবহু পেস্ট করলে
-> কাজ করবে না। এর জন্য আলাদা স্ক্রিপ্ট `scripts\dev.ps1` দেওয়া আছে।
+> কাজ করবে না। এর জন্য দুটো আলাদা স্ক্রিপ্ট দেওয়া আছে — `scripts\dev.ps1` (ইনস্টল +
+> চালু) আর `scripts\seed.ps1` (ডাটাবেজ রিসেট)।
 
 ---
 
@@ -62,7 +64,7 @@ cd symbiotic-city
 
 ```bash
 git log --oneline -1
-# e909d0a writing down what was measured
+# 9977880 Let the audit table column shrink so the table can scroll
 ```
 
 ---
@@ -93,6 +95,28 @@ cd ..
 ```
 
 `cd ..` টা ভুলবেন না — এতে আবার রুটে ফিরে আসবেন, পরের ধাপের জন্য।
+
+**এই ধাপে যা দেখতে পারেন — দুটোই স্বাভাবিক, ভয় পাবেন না:**
+
+| যা দেখছেন | মানে কী | কী করবেন |
+| --- | --- | --- |
+| `npm warn deprecated recharts@2.15.0` | recharts লাইব্রেরির পুরনো ভার্সন | কিছুই না। অ্যাপ ঠিক চলবে, শুধু ভবিষ্যতে v3-এ যাওয়া যাবে |
+| `blocked 1 postinstall` / `sharp` নিয়ে সতর্কবার্তা | npm এখন ডিফল্টে প্যাকেজের install-script আটকে রাখে | কিছুই না। এই প্রজেক্টে `next/image` ব্যবহার হয় না, তাই `sharp` লাগেই না |
+| `sharp`-এর ওই বার্তাটা আর দেখতে না চাইলে | — | `npm approve-scripts sharp` চালান, শুধু বার্তাটা চুপ হবে |
+
+**হিসাব করে নিন ইনস্টল ঠিক হয়েছে কি না:**
+
+```bash
+npm audit
+```
+
+শেষ লাইনে **`found 0 vulnerabilities`** দেখতে হবে। ওই সংখ্যাটা ০ না হলে নিচের
+«সমস্যা হলে» টেবিল দেখুন।
+
+> **⚠ `npm audit fix --force` চালাবেন না।** ওটা জোর করে major ভার্সন বদলে দেয়
+> (Next.js-কে ১৬-তে নিয়ে যায় এবং অন্য প্যাকেজও ভেঙে দিতে পারে)। আগের ভার্সনগুলোতে
+> যে নিরাপত্তা ত্রুটি ছিল, সেগুলো এই রিপোতে ইতিমধ্যেই ঠিক করা আছে — তাই ফ্রেশ
+> clone-এ `npm audit` এমনিই ০ দেখাবে।
 
 ---
 
@@ -197,11 +221,11 @@ cp .env.example .env
 
 সব লাইনে `PASS` দেখলে বোঝবেন login, সিমুলেশন, অপ্টিমাইজার, ওয়ার্কফ্লো — সব ঠিক।
 
-**পুরো টেস্ট স্যুট** (২৬৯টা টেস্ট, ~২ মিনিট ২০ সেকেন্ড):
+**পুরো টেস্ট স্যুট** (২৭৭টা টেস্ট, ~২ মিনিট ৩০ সেকেন্ড):
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
-# 269 passed, 10 skipped
+# 277 passed, 10 skipped
 ```
 
 **সব একসাথে** (টেস্ট + typecheck + build):
@@ -221,9 +245,15 @@ cp .env.example .env
 | পোর্ট ৩০০০ বা ৮০০০ busy | আগের কোনো সার্ভার এখনো চলছে | `lsof -i :3000` দিয়ে দেখুন, বা `pkill -f "next dev"` |
 | লগইন পেজে "Cannot reach API" | backend ওঠেনি | `./scripts/dev.sh api` আলাদা টার্মিনালে চালিয়ে লগ দেখুন |
 | ড্যাশবোর্ডে সব শূন্য | ডেটা সিড হয়নি | `.env`-এ `SEED_DEMO_DATA=1` দিন, ডাটাবেজ মুছে আবার চালান |
-| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | `rm backend/data/symbiotic_city.db` — পরের বার চালু হলে নতুন করে সিড হবে |
+| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | Linux/Mac: `FORCE=1 ./scripts/seed.sh` · **Windows: `.\scripts\seed.ps1 -Force`** — দুটোই নিজে থেকেই সঠিক ফাইলটা মুছে নতুন করে সিড করে, `.env`-এর path মানে |
 | `Permission denied: ./scripts/dev.sh` | এক্সিকিউট বিট নেই | `chmod +x scripts/*.sh` |
-| `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০+ দরকার |
+| `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০.৯+ দরকার |
+| `npm install` শেষে `1 critical` / `3 vulnerabilities` | পুরনো `package-lock.json` ধরে আছে | আগে `git pull` করুন। তাও এলে `npm audit fix --force` **চালাবেন না** — বরং `frontend` ফোল্ডারে `package-lock.json` মুছে আবার `npm install` (এতে lock নতুন করে তৈরি হবে, `package.json`-এর ভার্সনই মানবে) |
+| `blocked … postinstall` (`sharp`) | npm-এর allow-scripts | উপেক্ষা করুন, বা `npm approve-scripts sharp` |
+| `Another next dev server is already running` | একই ফোল্ডারে দুটো dev সার্ভার | আগেরটা বন্ধ করুন (Ctrl+C), তারপর আবার |
+| Next.js পুরনো `.next` নিয়ে ৫০০ error | আগের ভার্সনের build cache | `rm -rf frontend/.next` (PowerShell: `Remove-Item -Recurse -Force frontend\.next`) |
+| পেজ খোলে, কিন্তু **কোনো বাটনে কাজ করে না**, লগইন করলে পেজ রিলোড হয়ে `/login?email=...` হয় | ব্রাউজারের JS আর Next-এর dev-asset একই origin-এ মেলেনি, তাই hydrate হয়নি | `http://127.0.0.1:3000` **এবং** `http://localhost:3000` দুটোই চেষ্টা করুন। কোডে `allowedDevOrigins`-এ দুটোই দেওয়া আছে; হালনাগাদ কোড পেতে `git pull` করুন |
+| কনসোলে `403 (Unauthorized)` শুধু `/_next/static/...` ফাইলে | একই কারণ — dev asset ব্লক হয়েছে | উপরের সারির মতোই |
 | PowerShell: `'&&' is not a valid statement separator` | PowerShell 5.1 `&&` চেনে না | `;` এর বদলে এক লাইন করে দিন, বা `.\scripts\dev.ps1 setup` |
 | PowerShell: `running scripts is disabled` | Execution Policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | Windows: `python3` দিলে Store খোলে | Microsoft Store stub | `python` লিখুন |
@@ -350,6 +380,31 @@ python backend\run.py
 > **`.venv\Scripts` — `.venv/bin` নয়।** উইন্ডোজে venv-এর ভেতরের ফোল্ডারের নাম
 > `Scripts`, আর python-এর নাম `python.exe`, `python3` নয়।
 
+### ইনস্টল হয়ে গেছে, এখন শুধু চালু করতে চাই
+
+যদি `.venv` আর `frontend\node_modules` দুটোই তৈরি হয়ে গেছে (প্রথমবার `pip install`
+আর `npm install` সফল হয়েছে), তাহলে **আর কিছু ইনস্টল করতে হবে না**। শুধু:
+
+```powershell
+cd C:\path\to\symbiotic-city        # যেখানে README.md আছে
+.\.venv\Scripts\Activate.ps1
+.\scripts\dev.ps1
+```
+
+`dev.ps1 setup` আবার দিলে কিছু ভাঙবে না, তবে সময় নষ্ট হবে — ইনস্টল শেষ হলে
+শুধু `.\scripts\dev.ps1`-ই যথেষ্ট।
+
+অন্য টার্মিনালে (backend চলতে থাকা অবস্থায়) যাচাই করে নিন:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\smoke.py
+```
+
+সব লাইনে `PASS` এলে login, সিমুলেশন, অপ্টিমাইজার, ওয়ার্কফ্লো — সব ঠিক।
+
+তারপর ব্রাউজারে **<http://127.0.0.1:3000>** খুলে `admin@symbiotic.city` /
+`Admin#2026` দিয়ে লগইন করুন।
+
 ### দুইটা টার্মিনালে চালাতে চাইলে
 
 স্ক্রিপ্ট একসাথে দুটোই চালায়। আলাদা করতে চাইলে:
@@ -364,12 +419,55 @@ python backend\run.py
 
 তারপর ব্রাউজারে <http://127.0.0.1:3000>।
 
+### এক নজরে সব কমান্ড (Windows — কপি করে পেস্ট করুন)
+
+**প্রথমবার, শূন্য থেকে** (একটাই কমান্ড, বাকিটা নিজে করে):
+
+```powershell
+cd C:\path\to\symbiotic-city
+.\scripts\dev.ps1 setup
+```
+
+**প্রতিবার চালু করতে:**
+
+```powershell
+cd C:\path\to\symbiotic-city
+.\scripts\dev.ps1
+```
+
+**চালু আছে কি না যাচাই (আলাদা টার্মিনালে):**
+
+```powershell
+.\scripts\smoke.ps1
+```
+
+(অথবা সরাসরি: `. \.venv\Scripts\python.exe scripts\smoke.py`)
+
+**ডাটাবেজ রিসেট:**
+
+```powershell
+.\scripts\seed.ps1 -Force
+```
+
+**বন্ধ করতে:** যে টার্মিনালে চলছে সেখানে **Ctrl + C**।
+
+**কিছু ভেঙে গেলে শূন্য থেকে আবার:**
+
+```powershell
+Remove-Item -Recurse -Force .venv, frontend\node_modules, frontend\.next, backend\data
+.\scripts\dev.ps1 setup
+```
+
+> `Remove-Item` diye `.venv` মুছতে সময় লাগে, ধৈর্য ধরুন। `backend\data` মুছলে
+> ডেটা নতুন করে সিড হবে — ডেমো ডেটা, তাই ক্ষতি নেই।
+
 ### উইন্ডোজে যে বাগটা ধরা পড়েছিল
 
 আপনার প্রশ্নের কারণে একটা আসল বাগ পাওয়া গেছে, সেটা ঠিক করা হয়েছে।
 
-`.env.example` কপি করলে `DATABASE_URL` হয় আপেক্ষিক (`sqlite:///./data/...`) — সেটা
-ঠিকই কাজ করে। কিন্তু কেউ যদি **পূর্ণ Windows path** দেয়:
+`.env.example` কপি করলে `DATABASE_URL` হয় আপেক্ষিক (`sqlite:///backend/data/...`) — সেটা
+ঠিকই কাজ করে, কারণ আপেক্ষিক path রিপো রুটের সাপেক্ষে ধরা হয়। কিন্তু কেউ যদি
+**পূর্ণ Windows path** দেয়:
 
 ```
 DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.db
@@ -380,8 +478,14 @@ DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.
 `backend/tests/test_sqlite_paths.py`-এ ৭টা টেস্ট আছে যাতে আবার না হয়।
 
 > তবে গাইডের সবচেয়ে নিরাপদ পরামর্শ: `DATABASE_URL`-এ **আপেক্ষিক path-ই রাখুন**
-> (`sqlite:///./data/symbiotic_city.db`), অথবা `.env` একেবারেই বানাবেন না। ডিফল্ট
-> সবসময় ঠিক থাকে।
+> (`sqlite:///backend/data/symbiotic_city.db`), অথবা `.env` একেবারেই বানাবেন না।
+> ডিফল্ট সবসময় ঠিক থাকে।
+>
+> **`.env` বানানোর আগে-পরে ডেটা হারাবেন না।** আগে `.env` ছাড়া চালালে ডেটাবেজ তৈরি হয়
+> `backend\data\symbiotic_city.db`-তে। পরে `.env` বানিয়ে তাতে অন্য path দিলে অ্যাপ
+> সেটাকেই ব্যবহার করবে — পুরনো ফাইলটা রয়ে যাবে, কিন্তু খালি ডেটাবেজ দেখে মনে হবে
+> সব মুছে গেছে। তাই `.env` বানানোর আগে-পরে path একই রাখুন (এখন `.env.example`-এর
+> ডিফল্টও `backend/data/...`, তাই কপি করলে কিছু বদলায় না)।
 
 ### উইন্ডোজে আর যা যা মনে রাখবেন
 
@@ -389,7 +493,7 @@ DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.
 | --- | --- |
 | venv python | `.venv\Scripts\python.exe` |
 | venv activate | `.venv\Scripts\Activate.ps1` |
-| ডেটাবেজ রিসেট | `Remove-Item backend\data\symbiotic_city.db` |
+| ডেটাবেজ রিসেট | `.\scripts\seed.ps1 -Force` (নিজেই সঠিক ফাইল খুঁজে মুছে আবার সিড করে) |
 | টেস্ট চালানো | `.venv\Scripts\python.exe -m pytest backend\tests -q` |
 | smoke test | `.venv\Scripts\python.exe scripts\smoke.py` |
 | পোর্ট busy দেখতে | `Get-NetTCPConnection -LocalPort 3000` |
