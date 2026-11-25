@@ -647,13 +647,18 @@ export function ZoneDiscs({
         const selected = selectedZone === hull.zone.code;
         return (
           <group key={hull.zone.code} position={[hull.position.x, 0, hull.position.z]}>
+            {/* Kept faint by default: the discs are orientation, not content.
+                With no heat layer on they should read as a soft district
+                boundary under the city, not as five bright circles sitting on
+                top of it. A selected zone -- or one carrying a heat reading --
+                comes forward, because then the disc *is* the data. */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} onClick={() => onSelect?.(hull.zone.code)}>
               <circleGeometry args={[hull.radius, 48]} />
-              <meshBasicMaterial color={color} transparent opacity={selected ? 0.2 : 0.09} />
+              <meshBasicMaterial color={color} transparent opacity={selected || reading ? 0.16 : 0.045} />
             </mesh>
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
               <ringGeometry args={[hull.radius - 0.6, hull.radius, 64]} />
-              <meshBasicMaterial color={color} transparent opacity={selected ? 0.9 : 0.45} />
+              <meshBasicMaterial color={color} transparent opacity={selected ? 0.9 : reading ? 0.55 : 0.28} />
             </mesh>
           </group>
         );

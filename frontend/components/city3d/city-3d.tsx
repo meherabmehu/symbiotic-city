@@ -21,15 +21,31 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
+  Building2,
+  Droplets,
+  Hand,
+  HeartPulse,
+  Layers,
+  Minus,
+  Network,
+  Orbit,
+  Plus,
+  PlugZap,
+  Target,
+  Zap,
+} from "lucide-react";
+import {
   CITY_BOUNDS,
   buildCityModel,
   cameraPose,
   cascadeDepths,
   clampTarget,
+  fillPose,
   fitPose,
   focusPose,
   incidentPose,
   resolveVisualStatus,
+  STATUS_STYLES,
   type CameraMode,
   type PlacedAsset,
   type VisualStatus,
@@ -110,6 +126,26 @@ export const SCENARIO_LABELS: Record<
   },
 };
 
+/** Which glyph a floating landmark label wears. */
+type LandmarkIcon = "power" | "hospital" | "water" | "substation" | "core";
+
+/**
+ * A floating DOM label anchored to a point in the scene: an asset (clickable,
+ * selects it) or a zone centre (context only).
+ */
+interface Landmark {
+  key: string;
+  kind: "asset" | "zone";
+  assetId?: number;
+  label: string;
+  /** The real name, carried for the accessible label and the tooltip. */
+  name: string;
+  code: string;
+  icon: LandmarkIcon;
+  status: VisualStatus | null;
+  position: { x: number; y: number; z: number };
+}
+
 export interface City3DProps {
   graph: TwinGraph | null;
   loading?: boolean;
@@ -146,6 +182,13 @@ export interface City3DProps {
   fitRequest?: number;
   /** Receives measured scene statistics roughly twice a second, when supplied. */
   onStats?: (stats: SceneStats) => void;
+  /**
+   * In-canvas rail toggles. The rail lives *inside* the viewport because that is
+   * where the overlays it controls are drawn; the callbacks reach the state the
+   * caller owns, so the buttons stay real rather than decorative.
+   */
+  onToggleZones?: () => void;
+  onToggleEdges?: () => void;
   className?: string;
   height?: number;
 }
@@ -187,16 +230,29 @@ export function City3D(props: City3DProps) {
     focusIncidentId = null,
     fitRequest = 0,
     onStats,
+    onToggleZones,
+    onToggleEdges,
     className,
     height = 520,
   } = props;
 
   const [supported] = useState(() => hasWebGL());
   const [reducedMotion, setReducedMotion] = useState(false);
+  /** What the left mouse button does: orbit (the default) or pan. */
+  const [dragMode, setDragMode] = useState<"orbit" | "pan">("orbit");
+  // Compass "north-up": a counter, for the same reason fitRequest is one --
+  // pressing it twice must re-centre twice.
+  const [northRequest, setNorthRequest] = useState(0);
   const controlRef = useRef<OrbitControls | null>(null);
   // The live camera, for the keyboard pan. OrbitControls keeps its own reference,
   // but does not expose it, and a pan has to move both the camera and the target.
   const cameraRef = useRef<THREE.Camera | null>(null);
+  // DOM nodes the in-canvas reporter writes into every frame. Refs rather than
+  // state: a React re-render per frame would cost more than the projection.
+  const compassRef = useRef<HTMLButtonElement | null>(null);
+  const scaleLabelRef = useRef<HTMLSpanElement | null>(null);
+  const scaleBarRef = useRef<HTMLSpanElement | null>(null);
+  const labelRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const model = useMemo(() => buildCityModel(graph), [graph]);
 
@@ -261,6 +317,86 @@ export function City3D(props: City3DProps) {
     return set;
   }, [statusById]);
 
+  /**
+   * Floating labels for the landmarks an operator looks for first: generation,
+   * care, water, the central substation, and the core itself.
+   *
+   * One asset per category, chosen by priority (then code) rather than by
+   * position, so the label always sits on the asset the register would list
+   * first. The zone label is the geographic centre of the central district --
+   * "City Core" is what the reference design calls it, and the underlying name
+   * travels with it in the accessible label.
+   */
+  const landmarks = useMemo<Landmark[]>(() => {
+    if (!model) return [];
+    const wanted: { category: string; label: string; icon: LandmarkIcon }[] = [
+      { category: "power_station", label: "Power Station", icon: "power" },
+      { category: "hospital", label: "Hospital", icon: "hospital" },
+      { category: "water_treatment", label: "Water Facility", icon: "water" },
+      { category: "substation", label: "Substation", icon: "substation" },
+    ];
+    const picks: Landmark[] = [];
+    for (const entry of wanted) {
+      const candidate = model.assets
+        .filter((asset) => asset.node.category === entry.category)
+        .sort(
+          (a, b) =>
+            a.node.criticality - b.node.criticality || a.node.code.localeCompare(b.node.code),
+        )[0];
+      if (!candidate) continue;
+      picks.push({
+        key: `asset-${candidate.node.id}`,
+        kind: "asset",
+        assetId: candidate.node.id,
+        label: entry.label,
+        name: candidate.node.name,
+        code: candidate.node.code,
+        icon: entry.icon,
+        status: statusById.get(candidate.node.id) ?? "operational",
+        position: {
+          x: candidate.position.x,
+          y: candidate.footprint.height + 3.5,
+          z: candidate.position.z,
+        },
+      });
+    }
+    const core =
+      model.zones.find((hull) => hull.zone.code === "Z-CEN") ??
+      [...model.zones].sort((a, b) => b.zone.population - a.zone.population)[0];
+    if (core) {
+      picks.push({
+        key: `zone-${core.zone.code}`,
+        kind: "zone",
+        label: "City Core",
+        name: core.zone.name,
+        code: core.zone.code,
+        icon: "core",
+        status: null,
+        position: { x: core.position.x, y: 6, z: core.position.z },
+      });
+    }
+    return picks;
+  }, [model, statusById]);
+
+  /**
+   * Zoom by moving the camera along its own line of sight, clamped to the orbit
+   * limits. Used by the +/- stack; the distance clamp is what stops a repeated
+   * press from ending up inside a building or outside the model.
+   */
+  const zoomBy = useCallback((factor: number) => {
+    const control = controlRef.current;
+    const camera = cameraRef.current;
+    if (!control || !camera) return;
+    const offset = camera.position.clone().sub(control.target);
+    const distance = THREE.MathUtils.clamp(
+      offset.length() * factor,
+      control.minDistance,
+      control.maxDistance,
+    );
+    camera.position.copy(control.target).add(offset.setLength(distance));
+    control.update();
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -323,7 +459,9 @@ export function City3D(props: City3DProps) {
   }
 
   return (
-    <div className={className} style={{ height }} data-testid="city3d-canvas">
+    // `relative` anchors the tool rail, compass, scale bar and labels to this box
+    // rather than to an ancestor, so they travel with the canvas when it resizes.
+    <div className={`relative ${className ?? ""}`} style={{ height }} data-testid="city3d-canvas">
       {/* Keyboard access to the camera. The canvas itself cannot take focus and does
           not respond to keys, so keystrokes are handled on the wrapper: arrows pan,
           plus and minus zoom, and the number keys pick a preset. Everything here
@@ -484,15 +622,248 @@ export function City3D(props: City3DProps) {
           focus={focusId != null ? findAsset(model.assets, focusId) : null}
           incident={focusIncidentId != null ? findAsset(model.assets, focusIncidentId) : null}
           fitRequest={fitRequest}
+          northRequest={northRequest}
           reducedMotion={reducedMotion}
           controlRef={controlRef}
         />
-        <CameraControls controlRef={controlRef} />
+        <CameraControls controlRef={controlRef} dragMode={dragMode} />
         <ControlLoop controlRef={controlRef} />
+        {/* Projects the floating labels and drives the compass/scale readouts.
+            Runs inside the frame loop because that is the only place the live
+            camera and viewport size are guaranteed to be current. */}
+        <OverlayReporter
+          controlRef={controlRef}
+          compassRef={compassRef}
+          scaleLabelRef={scaleLabelRef}
+          scaleBarRef={scaleBarRef}
+          labelRefs={labelRefs}
+          landmarks={landmarks}
+        />
       </Canvas>
+      </div>
+
+      {/* Viewport chrome: DOM, not canvas, so the text stays crisp, focusable
+          and readable by assistive technology. */}
+      <div className="pointer-events-none absolute inset-0 z-10">
+        {/* Tool rail — every button performs a real camera or overlay action. */}
+        <div
+          role="toolbar"
+          aria-label="City view tools"
+          className="absolute left-3 top-3 flex flex-col gap-1.5"
+        >
+          <RailButton
+            label="Orbit: left drag rotates the view"
+            pressed={dragMode === "orbit"}
+            onClick={() => setDragMode("orbit")}
+          >
+            <Orbit className="h-4 w-4" aria-hidden />
+          </RailButton>
+          <RailButton
+            label="Pan: left drag moves the view"
+            pressed={dragMode === "pan"}
+            onClick={() => setDragMode("pan")}
+          >
+            <Hand className="h-4 w-4" aria-hidden />
+          </RailButton>
+          {onToggleZones ? (
+            <RailButton
+              label="Toggle zone overlay"
+              pressed={showZones}
+              onClick={onToggleZones}
+            >
+              <Layers className="h-4 w-4" aria-hidden />
+            </RailButton>
+          ) : null}
+          {onToggleEdges ? (
+            <RailButton
+              label="Toggle dependency links"
+              pressed={showEdges}
+              onClick={onToggleEdges}
+            >
+              <Network className="h-4 w-4" aria-hidden />
+            </RailButton>
+          ) : null}
+          <RailButton
+            label="Reset north-up view"
+            pressed={false}
+            onClick={() => setNorthRequest((value) => value + 1)}
+          >
+            <Target className="h-4 w-4" aria-hidden />
+          </RailButton>
+        </div>
+
+        {/* Compass and zoom stack, top-right. */}
+        <div className="absolute right-3 top-3 flex flex-col items-center gap-2">
+          <button
+            ref={compassRef}
+            type="button"
+            aria-label="Compass — turn the view to face north"
+            title="Turn the view to face north"
+            onClick={() => setNorthRequest((value) => value + 1)}
+            className="pointer-events-auto grid h-11 w-11 place-items-center rounded-full border border-white/15 bg-navy-950/85 text-white backdrop-blur transition hover:border-accent/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <span
+              aria-hidden
+              className="block transition-transform"
+              style={{ transform: "rotate(var(--heading, 0deg))" }}
+            >
+              <svg viewBox="0 0 32 32" className="h-7 w-7" role="presentation">
+                <circle cx="16" cy="16" r="13.5" fill="rgba(3,10,24,0.65)" stroke="rgba(255,255,255,0.3)" />
+                <polygon points="16,4.5 19.6,17 16,14 12.4,17" fill="#ff6b6b" />
+                <polygon points="16,27.5 12.4,15 16,18 19.6,15" fill="rgba(255,255,255,0.55)" />
+                <text
+                  x="16"
+                  y="12.6"
+                  textAnchor="middle"
+                  fontSize="6"
+                  fontWeight="700"
+                  fill="#ffffff"
+                  fontFamily="inherit"
+                >
+                  N
+                </text>
+              </svg>
+            </span>
+          </button>
+          <div className="pointer-events-auto flex flex-col overflow-hidden rounded-lg border border-white/15 bg-navy-950/85 backdrop-blur">
+            <button
+              type="button"
+              aria-label="Zoom in"
+              title="Zoom in"
+              onClick={() => zoomBy(0.8)}
+              className="grid h-9 w-9 place-items-center text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+            </button>
+            <div className="h-px bg-white/10" aria-hidden />
+            <button
+              type="button"
+              aria-label="Zoom out"
+              title="Zoom out"
+              onClick={() => zoomBy(1.25)}
+              className="grid h-9 w-9 place-items-center text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <Minus className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        </div>
+
+        {/* Scale bar, bottom-right: the width and label are recomputed from the
+            live camera distance, so it stays true while orbiting or zooming. */}
+        <div
+          data-testid="city3d-scale-bar"
+          className="absolute bottom-3 right-3 flex flex-col items-end gap-1 rounded-lg border border-white/10 bg-navy-950/80 px-2.5 py-1.5 backdrop-blur"
+        >
+          <span ref={scaleLabelRef} className="font-mono text-[10px] text-ink-200">
+            250 m
+          </span>
+          <span
+            ref={scaleBarRef}
+            aria-hidden
+            className="block h-1.5 border-b border-r border-l border-white/70"
+            style={{ width: 120 }}
+          />
+        </div>
+
+        {/* Floating landmark labels. Positioned by OverlayReporter each frame;
+            hidden below sm where they would crowd the canvas. */}
+        <div data-testid="city3d-labels" className="absolute inset-0 hidden sm:block">
+          {landmarks.map((landmark) => (
+            <div
+              key={landmark.key}
+              ref={(element) => {
+                if (element) {
+                  element.style.transform = "translate3d(-9999px, -9999px, 0)";
+                  labelRefs.current.set(landmark.key, element);
+                } else {
+                  labelRefs.current.delete(landmark.key);
+                }
+              }}
+              className="absolute left-0 top-0 will-change-transform"
+            >
+              {landmark.kind === "asset" && landmark.assetId != null ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const node = graph?.nodes.find((candidate) => candidate.id === landmark.assetId) ?? null;
+                    onSelect?.(node);
+                  }}
+                  aria-label={`${landmark.name} (${landmark.code}) — select on the map`}
+                  title={`${landmark.name} · ${landmark.code}`}
+                  className="pointer-events-auto flex -translate-x-1/2 -translate-y-full items-center gap-1.5 whitespace-nowrap rounded-lg border border-white/15 bg-navy-950/90 px-2.5 py-1.5 text-[11px] font-medium text-white shadow-lg backdrop-blur transition hover:border-accent/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <LandmarkGlyph kind={landmark.icon} />
+                  {landmark.label}
+                  {landmark.status ? (
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: STATUS_STYLES[landmark.status].color }}
+                    />
+                  ) : null}
+                </button>
+              ) : (
+                <span
+                  title={landmark.name}
+                  className="flex -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-white shadow-lg backdrop-blur"
+                >
+                  <LandmarkGlyph kind={landmark.icon} />
+                  {landmark.label}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
+}
+
+/** One icon button in the in-canvas tool rail. */
+function RailButton({
+  label,
+  pressed,
+  onClick,
+  children,
+}: {
+  label: string;
+  pressed: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={`pointer-events-auto grid h-9 w-9 place-items-center rounded-lg border backdrop-blur transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        pressed
+          ? "border-accent/50 bg-accent/15 text-accent"
+          : "border-white/15 bg-navy-950/85 text-ink-300 hover:border-white/30 hover:text-white"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** The glyph inside a landmark label, so the kind reads before the text does. */
+function LandmarkGlyph({ kind }: { kind: LandmarkIcon }) {
+  const className = "h-3.5 w-3.5 shrink-0";
+  switch (kind) {
+    case "power":
+      return <Zap className={`${className} text-amber`} aria-hidden />;
+    case "hospital":
+      return <HeartPulse className={`${className} text-coral`} aria-hidden />;
+    case "water":
+      return <Droplets className={`${className} text-accent`} aria-hidden />;
+    case "substation":
+      return <PlugZap className={`${className} text-accent`} aria-hidden />;
+    case "core":
+      return <Building2 className={`${className} text-accent`} aria-hidden />;
+  }
 }
 
 /** Records the live camera so the DOM keyboard handler can move it. */
@@ -535,6 +906,7 @@ function CameraRig({
   focus,
   incident,
   fitRequest,
+  northRequest,
   reducedMotion,
   controlRef,
 }: {
@@ -542,6 +914,8 @@ function CameraRig({
   focus: PlacedAsset | null;
   incident: PlacedAsset | null;
   fitRequest: number;
+  /** Increments to swing the camera to a due-north heading, keeping range. */
+  northRequest: number;
   reducedMotion: boolean;
   controlRef: React.MutableRefObject<OrbitControls | null>;
 }) {
@@ -579,6 +953,43 @@ function CameraRig({
     // moment of the press, not tracked continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitRequest]);
+
+  // Compass "north-up": swing the camera onto the +Z axis -- which is what puts
+  // the city's north edge at the top of the screen -- keeping the current
+  // distance, height and orbit target. Unlike a preset change this preserves
+  // where the user was looking, only correcting the heading.
+  useEffect(() => {
+    if (northRequest === 0) return;
+    const control = controlRef.current;
+    if (!control) return;
+    const target = control.target.clone();
+    const offset = camera.position.clone().sub(target);
+    const horizontal = Math.hypot(offset.x, offset.z) || 1;
+    goal.current = {
+      position: new THREE.Vector3(target.x, target.y + offset.y, target.z + horizontal),
+      target,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [northRequest]);
+
+  // First valid measurement: frame the whole city rather than trusting the
+  // preset distance, which was chosen for one aspect ratio. The preset effect
+  // above has already set a goal on mount; this overwrites it once the viewport
+  // size is real, so the opening frame shows the entire model with margin
+  // instead of cropping the near edge. `fitted` keeps it one-shot: afterwards
+  // only an explicit fit, preset or focus moves the camera.
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current) return;
+    if (size.width < 2 || size.height < 2) return;
+    fitted.current = true;
+    const pose = fillPose(mode, size.width / size.height, (camera as THREE.PerspectiveCamera).fov ?? 42);
+    goal.current = {
+      position: new THREE.Vector3(...pose.position),
+      target: new THREE.Vector3(...pose.target),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size.width, size.height]);
 
   useEffect(() => {
     const control = controlRef.current;
@@ -624,7 +1035,13 @@ function CameraRig({
  * The ref is shared with `CameraRig` above, which needs the live instance to lerp
  * its target during a focus transition.
  */
-function CameraControls({ controlRef }: { controlRef: React.MutableRefObject<OrbitControls | null> }) {
+function CameraControls({
+  controlRef,
+  dragMode,
+}: {
+  controlRef: React.MutableRefObject<OrbitControls | null>;
+  dragMode: "orbit" | "pan";
+}) {
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
   const get = useThree((state) => state.get);
@@ -663,6 +1080,15 @@ function CameraControls({ controlRef }: { controlRef: React.MutableRefObject<Orb
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, gl]);
 
+  // The rail's orbit/pan picker rebinds only the left button; right-drag pan and
+  // the wheel are untouched, so switching modes never removes a gesture.
+  useEffect(() => {
+    const controls = controlRef.current;
+    if (!controls) return;
+    controls.mouseButtons.LEFT =
+      dragMode === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+  }, [dragMode, controlRef]);
+
   return null;
 }
 
@@ -671,6 +1097,122 @@ function ControlLoop({ controlRef }: { controlRef: React.MutableRefObject<OrbitC
   useFrame(() => {
     controlRef.current?.update();
   });
+  return null;
+}
+
+/* ------------------------------------------------------- viewport overlays */
+
+/** Smallest 1/2/5 x 10^n that is at least `meters`. */
+function niceScale(meters: number): number {
+  const exponent = Math.floor(Math.log10(Math.max(meters, 1e-6)));
+  const base = 10 ** exponent;
+  for (const factor of [1, 2, 5, 10]) {
+    const candidate = base * factor;
+    if (candidate >= meters) return candidate;
+  }
+  return base * 10;
+}
+
+const _projected = new THREE.Vector3();
+
+/**
+ * Writes the floating labels, compass heading and scale bar from the live
+ * camera. Everything here is a direct DOM mutation on a ref: React state at
+ * frame rate would re-render the whole viewport sixty times a second to move
+ * five labels.
+ *
+ * The labels update every frame (they must track the scene exactly); the
+ * compass and scale bar settle at ~7Hz, which is faster than the eye reads
+ * them and cheap enough to ignore.
+ */
+function OverlayReporter({
+  controlRef,
+  compassRef,
+  scaleLabelRef,
+  scaleBarRef,
+  labelRefs,
+  landmarks,
+}: {
+  controlRef: React.MutableRefObject<OrbitControls | null>;
+  compassRef: React.MutableRefObject<HTMLButtonElement | null>;
+  scaleLabelRef: React.MutableRefObject<HTMLSpanElement | null>;
+  scaleBarRef: React.MutableRefObject<HTMLSpanElement | null>;
+  labelRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  landmarks: Landmark[];
+}) {
+  const camera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
+  const accumulator = useRef(0);
+
+  useFrame((_, delta) => {
+    // --- floating labels: every frame -------------------------------------
+    // Labels are stacked rather than hidden when they collide: the landmarks
+    // cluster around the central district (that is where they really are), and
+    // a label that vanishes whenever the camera settles would be worse than one
+    // that slides a row above its neighbour.
+    const placed: { x: number; y: number }[] = [];
+    for (const landmark of landmarks) {
+      const element = labelRefs.current.get(landmark.key);
+      if (!element) continue;
+      _projected
+        .set(landmark.position.x, landmark.position.y, landmark.position.z)
+        .project(camera);
+      if (_projected.z > 1 || _projected.z < -1) {
+        // Behind the camera: park it off-screen rather than letting it wrap
+        // around from the far side.
+        element.style.opacity = "0";
+        continue;
+      }
+      let x = (_projected.x * 0.5 + 0.5) * size.width;
+      let y = (-_projected.y * 0.5 + 0.5) * size.height;
+      // Nudge upward until clear of every label already placed this frame, then
+      // clamp so a stack at the top edge stays inside the viewport.
+      let guard = 0;
+      while (
+        guard++ < 8 &&
+        placed.some((other) => Math.abs(other.x - x) < 170 && Math.abs(other.y - y) < 40)
+      ) {
+        y -= 40;
+      }
+      y = Math.max(y, 34);
+      placed.push({ x, y });
+      element.style.opacity = "1";
+      element.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+    }
+
+    // --- compass + scale bar: throttled ------------------------------------
+    accumulator.current += delta;
+    if (accumulator.current < 0.15) return;
+    accumulator.current = 0;
+
+    const control = controlRef.current;
+    if (control && compassRef.current) {
+      const dx = camera.position.x - control.target.x;
+      const dz = camera.position.z - control.target.z;
+      const degrees = (Math.atan2(dx, dz) * 180) / Math.PI;
+      compassRef.current.style.setProperty("--heading", `${degrees.toFixed(1)}deg`);
+    }
+
+    if (scaleLabelRef.current && scaleBarRef.current) {
+      const distance = control
+        ? camera.position.distanceTo(control.target)
+        : camera.position.length();
+      const perspective = camera as THREE.PerspectiveCamera;
+      const fov = ((perspective.fov ?? 42) * Math.PI) / 180;
+      // Ground metres per CSS pixel at the orbit target: the visible span at
+      // that distance, divided by the viewport height in pixels.
+      const metresPerPixel =
+        (2 * Math.tan(fov / 2) * Math.max(distance, 1)) / Math.max(size.height, 1);
+      const nominalPx = 120;
+      const targetMetres = nominalPx * metresPerPixel;
+      const metres = niceScale(targetMetres);
+      const widthPx = Math.max(24, Math.min(nominalPx, (metres / targetMetres) * nominalPx));
+      scaleBarRef.current.style.width = `${widthPx.toFixed(0)}px`;
+      scaleLabelRef.current.textContent =
+        metres >= 1000 ? `${(metres / 1000).toFixed(metres % 1000 === 0 ? 0 : 1)} km` : `${Math.round(metres)} m`;
+    }
+  });
+
   return null;
 }
 
