@@ -8,8 +8,25 @@ production-shaped path (Postgres, two containers).
 ### Prerequisites
 
 * Python 3.11+ (3.12 works; 3.13 does too, OR-Tools wheels permitting)
-* Node.js 20.19+ and npm (Next.js 16 requires 20.9; vitest 4 pulls vite 8, which
-  requires 20.19)
+* Node.js 20.19+ (Next.js 16 requires 20.9; vitest 4 pulls vite 8, which requires
+  20.19)
+* **npm 11 or newer.** This is not a preference. npm 9 and 10 crash while resolving
+  vitest's browser-mode peers and abort the install before writing anything:
+
+  ```text
+  npm error Cannot read properties of null (reading 'edgesOut')
+  ```
+
+  Every npm 9.x and 10.x tested does this, down to a package.json containing nothing
+  but `"vitest": "4.1.12"`, so it cannot be fixed from this project's dependency
+  graph. npm 11 does not. A `preinstall` guard refuses to run under npm 10 with a
+  message saying so, rather than letting the install fail and look like a missing
+  dependency.
+
+  ```bash
+  npm install -g npm@11
+  npm --version    # must print 11.x
+  ```
 * No database server: SQLite is the default
 
 ### Install
@@ -19,8 +36,13 @@ python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 
 cd frontend
-npm install
+npm ci
 ```
+
+`npm ci` rather than `npm install`: it installs exactly the lockfile, refuses to
+modify it, and fails immediately if the two disagree. `npm install` is fine once the
+tree exists; it is a poor first step because it will silently rewrite the lockfile
+when something is off.
 
 ### Configure
 
@@ -185,3 +207,121 @@ Requires a seeded database (`SEED_DEMO_DATA=1`) and the demo accounts.
 | Login fails with correct credentials | Rate limiting: 30 auth requests/minute/IP. Wait a minute. |
 | `ModuleNotFoundError: app` | Run alembic/pytest from `backend/`, not the repo root. |
 | Next build tries to fetch a font | The design uses system font stacks only; a stray `next/font` import will fail in offline builds. |
+
+## 6. Windows troubleshooting
+
+Two failures account for almost every report of "the 3D page will not build".
+
+### `'next' is not recognized as an internal or external command`
+
+`node_modules/.bin` does not exist, or exists only partly. It is a **symptom**, not a
+cause: the install did not finish. Check the install first — under npm 9 or 10 it
+crashed and wrote nothing:
+
+```powershell
+npm --version          # must be 11.x; see Prerequisites
+cd frontend
+npm ci
+```
+
+Only if `npm ci` completes and `next` is still missing is the tree itself suspect:
+
+```powershell
+Test-Path .\frontend\node_modules\.bin\next.cmd
+Test-Path .\frontend\node_modules\next\package.json
+```
+
+### `EPERM: operation not permitted, unlink ...\next-swc.win32-x64-msvc.node`
+
+Windows will not delete a file that a process has open, and npm deletes the SWC
+native binary before replacing it. Something is holding it. In order of likelihood:
+
+1. **A dev server is still running** — `npm run dev`, or a terminal you closed
+   without stopping it.
+2. **An editor has it open** — VS Code's TypeScript server and its file watchers
+   hold handles inside `node_modules`. This is the most common cause on Windows and
+   the least obvious.
+3. **Antivirus real-time scanning** — Defender and similar inspect a newly written
+   `.node` binary and briefly lock it.
+
+**Find what is holding the file** (safest first — this only lists, it does not kill):
+
+```powershell
+Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, StartTime, Path
+```
+
+If you also have Sysinternals, this names the holder precisely:
+
+```powershell
+handle.exe "next-swc.win32-x64-msvc.node"
+```
+
+**Stop only this project's processes.** Run from the repository root. The filter
+matches `node` processes whose command line mentions this repository, so an unrelated
+Node app is left alone:
+
+```powershell
+$repo = (Get-Location).Path
+Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+  Where-Object { $_.CommandLine -like "*$repo*" } |
+  ForEach-Object {
+    Write-Host "Stopping $($_.ProcessId): $($_.CommandLine)"
+    Stop-Process -Id $_.ProcessId -Force
+  }
+```
+
+Review the printed command lines before accepting. If nothing matches, the open
+handle is an editor or a scanner, not a stray server.
+
+**Then clear the generated directories.** Both are build output and contain no
+source. Nothing you have written lives in either:
+
+```powershell
+Remove-Item -Recurse -Force .\frontend\node_modules, .\frontend\.next -ErrorAction SilentlyContinue
+```
+
+If that still fails with EPERM, the handle is held by something that survived the
+process check. Closing VS Code, then re-running the two commands above, resolves it in
+practice; a reboot resolves it always.
+
+**Then reinstall:**
+
+```powershell
+cd frontend
+npm ci
+npm run build
+npm run dev
+```
+
+### Verify each step
+
+```powershell
+npm --version                                  # 11.x
+Test-Path .\node_modules\next\package.json    # True
+Test-Path .\node_modules\@next\swc-win32-x64-msvc   # True on Windows x64
+npx tsc --noEmit                               # no output
+npm test                                       # 107 passed
+npm run build                                  # Compiled successfully
+```
+
+`npm run dev` then serves <http://127.0.0.1:3000>. The Digital Twin is at `/twin`
+and needs the API running; without it the page still loads and the panels report the
+failure themselves rather than blanking.
+
+### If the 3D page still reports a missing module
+
+Confirm what is actually installed before changing any dependency:
+
+```powershell
+cd frontend
+npm ls @react-three/fiber three
+Select-String -Path package.json -Pattern "drei"
+```
+
+`drei` is **not** a dependency of this project and must not be reinstalled. The 3D
+view imports `OrbitControls` from `three` directly
+(`three/examples/jsm/controls/OrbitControls.js`), which is why the only packages that
+need to be present are `three` and `@react-three/fiber`. If an editor is still
+reporting `Can't resolve '@react-three/drei'`, it is reading a stale file — check
+that `frontend/components/city3d/city-3d.tsx` line 22 imports from `three`, then
+restart the TypeScript server (`Ctrl+Shift+P` → *TypeScript: Restart TS Server*).
