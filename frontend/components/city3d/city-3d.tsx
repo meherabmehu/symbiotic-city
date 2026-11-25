@@ -17,10 +17,9 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
-import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   CITY_BOUNDS,
   buildCityModel,
@@ -115,6 +114,7 @@ export function City3D(props: City3DProps) {
 
   const [supported] = useState(() => hasWebGL());
   const [reducedMotion, setReducedMotion] = useState(false);
+  const controlRef = useRef<OrbitControls | null>(null);
 
   const model = useMemo(() => buildCityModel(graph), [graph]);
 
@@ -281,7 +281,14 @@ export function City3D(props: City3DProps) {
           />
         </Suspense>
 
-        <CameraRig mode={mode} focus={focusId != null ? findAsset(model.assets, focusId) : null} reducedMotion={reducedMotion} />
+        <CameraRig
+          mode={mode}
+          focus={focusId != null ? findAsset(model.assets, focusId) : null}
+          reducedMotion={reducedMotion}
+          controlRef={controlRef}
+        />
+        <CameraControls controlRef={controlRef} />
+        <ControlLoop controlRef={controlRef} />
       </Canvas>
     </div>
   );
@@ -314,12 +321,13 @@ function CameraRig({
   mode,
   focus,
   reducedMotion,
+  controlRef,
 }: {
   mode: CameraMode;
   focus: PlacedAsset | null;
   reducedMotion: boolean;
+  controlRef: React.MutableRefObject<OrbitControls | null>;
 }) {
-  const controls = useRef<OrbitControlsImpl | null>(null);
   const goal = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
 
   // React to preset and focus changes by computing a new goal pose.
@@ -332,16 +340,16 @@ function CameraRig({
   }, [mode, focus]);
 
   useEffect(() => {
-    const control = controls.current;
+    const control = controlRef.current;
     if (!control) return;
     // Reduce the damping when the user has asked for less motion: the camera
     // still follows the pointer, but does not coast afterwards.
     control.enableDamping = !reducedMotion;
-  }, [reducedMotion]);
+  }, [reducedMotion, controlRef]);
 
   useFrame((state, delta) => {
     const camera = state.camera;
-    const control = controls.current;
+    const control = controlRef.current;
     const destination = goal.current;
     if (!control || !destination) return;
 
@@ -357,24 +365,69 @@ function CameraRig({
     }
   });
 
-  return (
-    <OrbitControls
-      ref={controls}
-      enableDamping
-      dampingFactor={0.08}
-      rotateSpeed={0.6}
-      zoomSpeed={0.9}
-      panSpeed={0.7}
-      minDistance={CITY_BOUNDS.minDistance}
-      maxDistance={CITY_BOUNDS.maxDistance}
-      minPolarAngle={CITY_BOUNDS.minPolarAngle}
-      maxPolarAngle={CITY_BOUNDS.maxPolarAngle}
-      // Left drag rotates, right drag pans, wheel zooms -- and two fingers do the
-      // same on touch, which is what makes the canvas usable on a phone.
-      enablePan
-      makeDefault
-    />
-  );
+  return null;
+}
+
+/**
+ * OrbitControls, mounted imperatively.
+ *
+ * three.js's OrbitControls is a plain class that wants a camera and a DOM element,
+ * and manages its own listeners. It does not need a React binding -- constructing
+ * it once inside the canvas and disposing it on unmount is fewer moving parts than
+ * a wrapper component, and it means the controls are a direct dependency of the
+ * renderer rather than of a controls metapackage.
+ *
+ * The ref is shared with `CameraRig` above, which needs the live instance to lerp
+ * its target during a focus transition.
+ */
+function CameraControls({ controlRef }: { controlRef: React.MutableRefObject<OrbitControls | null> }) {
+  const camera = useThree((state) => state.camera);
+  const gl = useThree((state) => state.gl);
+  const get = useThree((state) => state.get);
+
+  useEffect(() => {
+    const controls = new OrbitControls(camera, gl.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.rotateSpeed = 0.6;
+    controls.zoomSpeed = 0.9;
+    controls.panSpeed = 0.7;
+    controls.minDistance = CITY_BOUNDS.minDistance;
+    controls.maxDistance = CITY_BOUNDS.maxDistance;
+    controls.minPolarAngle = CITY_BOUNDS.minPolarAngle;
+    controls.maxPolarAngle = CITY_BOUNDS.maxPolarAngle;
+    // Left drag rotates, right drag pans, wheel zooms, and the same two gestures
+    // work with two fingers on touch -- which is what makes this usable on a phone.
+    controls.enablePan = true;
+    controls.enableZoom = true;
+    controls.enableRotate = true;
+    // Write the current target back into the camera so a reset() is meaningful.
+    controls.saveState();
+    controlRef.current = controls;
+
+    const invalidate = get().invalidate;
+    const onChange = () => invalidate?.();
+    controls.addEventListener("change", onChange);
+
+    return () => {
+      controls.removeEventListener("change", onChange);
+      controls.dispose();
+      controlRef.current = null;
+    };
+    // `camera` and `gl` are stable for the life of the canvas; re-creating the
+    // controls on every render would drop the user's drag mid-gesture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera, gl]);
+
+  return null;
+}
+
+/** Drive damping every frame; OrbitControls does not run itself. */
+function ControlLoop({ controlRef }: { controlRef: React.MutableRefObject<OrbitControls | null> }) {
+  useFrame(() => {
+    controlRef.current?.update();
+  });
+  return null;
 }
 
 /* -------------------------------------------------------------- imperative */
