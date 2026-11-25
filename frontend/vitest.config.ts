@@ -1,5 +1,4 @@
 import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -13,7 +12,10 @@ import { fileURLToPath } from "node:url";
  * is how it *looks*; that is left to the browser tests and to the human check.
  */
 export default defineConfig({
-  plugins: [react()],
+  // JSX compiles through vite's default esbuild transform with React's automatic
+  // runtime, so the tests need no Babel or React plugin. That is deliberate: the
+  // React plugin drags in its own copy of picomatch, which npm's hoisting cannot
+  // reconcile with the one the Next toolchain already has.
   resolve: {
     alias: {
       "@": fileURLToPath(new URL(".", import.meta.url)),
