@@ -415,6 +415,14 @@ function LensColumn({
 
 /* ------------------------------------------------------------------ ground */
 
+/**
+ * Street furniture, drawn one prop at a time.
+ *
+ * Kept for a single prop that has to be an individual object -- a car placed by
+ * hand, or a lamp on a specific corner. The scattered scenery in `city-parts.tsx`
+ * does not use it: 220 of these would be 440 meshes, so that path instances a
+ * part table instead.
+ */
 /** Static street furniture props, shared geometry. */
 export function SceneryProp({ kind, position, rotation, scale }: {
   kind: "tree" | "car" | "bench" | "lamp";
