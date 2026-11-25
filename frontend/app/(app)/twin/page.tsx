@@ -18,7 +18,8 @@ import {
   Play,
   Share2,
 } from "lucide-react";
-import { CityTwin, ZoneSummary } from "@/components/city-twin";
+import { ZoneSummary } from "@/components/city-twin";
+import { TwinView } from "@/components/city3d/twin-view";
 import {
   Alert,
   Badge,
@@ -50,6 +51,7 @@ export default function TwinPage() {
   const [selected, setSelected] = useState<TwinNode | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [showEdges, setShowEdges] = useState(true);
+  const [showZones, setShowZones] = useState(true);
   const { data, loading, error, reload } = useAsync<TwinGraph>(() => api.get("/twin/graph"), []);
 
   const graph = useMemo(() => {
@@ -70,7 +72,7 @@ export default function TwinPage() {
       <PageHeader
         eyebrow="Digital twin"
         title="Interactive city"
-        description="A live model of Aurora Vale: five zones, every registered asset and every modelled dependency. Select an asset to inspect its dependencies, then launch a simulation from the failure lab."
+        description="A living 3D model of Aurora Vale: five zones, every registered asset and every modelled dependency, with traffic on the avenues. Rotate, zoom and select a building to inspect what it depends on, then launch a simulation from the failure lab."
         actions={
           <>
             <Button variant="secondary" onClick={reload}>
@@ -127,16 +129,26 @@ export default function TwinPage() {
                 >
                   <Network className="h-3.5 w-3.5" aria-hidden /> {showEdges ? "Dependencies on" : "Dependencies off"}
                 </Button>
+                <Button
+                  variant={showZones ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setShowZones((v) => !v)}
+                  aria-pressed={showZones}
+                >
+                  <Layers className="h-3.5 w-3.5" aria-hidden /> {showZones ? "Zones on" : "Zones off"}
+                </Button>
               </div>
-              <p className="text-[11px] text-ink-500">Synthetic layout · normalised 0–100 grid coordinates</p>
+              <p className="text-[11px] text-ink-500">Synthetic layout · assets placed from the twin graph, roads routed around their plots</p>
             </div>
-            <CityTwin
+            <TwinView
               graph={graph}
               loading={loading}
+              error={error}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
               showEdges={showEdges}
-              height={520}
+              showZones={showZones}
+              height={560}
             />
           </Panel>
 
