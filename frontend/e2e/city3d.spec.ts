@@ -324,6 +324,45 @@ test.describe("3d city", () => {
     await expect(page.getByRole("button", { name: /reset view/i })).toBeVisible();
   });
 
+  test("fills the panel instead of collapsing to a strip at the top", async ({ page }) => {
+    // Regression test for the black-void layout bug: the keyboard-accessibility
+    // wrapper inside City3D had no height, so React Three Fiber's `height: 100%`
+    // chain resolved against an auto-height parent and the canvas collapsed to
+    // its intrinsic 150px -- a thin strip of city at the top of a tall empty
+    // panel. The canvas must occupy (almost) all of the panel it lives in.
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+
+    const canvas = page.locator('[data-testid="city3d-canvas"] canvas').first();
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+    // Let the renderer settle on its first measured size.
+    await page.waitForTimeout(1_500);
+
+    const panel = page.getByTestId("city3d-canvas");
+    const canvasBox = await canvas.boundingBox();
+    const panelBox = await panel.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    expect(panelBox).not.toBeNull();
+
+    // The canvas fills its panel: at least 90% of its height, and far above the
+    // 150px intrinsic canvas height that the collapsed state settled at.
+    expect(
+      canvasBox!.height,
+      `canvas height ${canvasBox!.height} vs panel height ${panelBox!.height}`,
+    ).toBeGreaterThan(panelBox!.height * 0.9);
+    expect(canvasBox!.height).toBeGreaterThan(400);
+
+    // The drawing buffer matches the element, so the scene is not rendered at
+    // one size and stretched into another.
+    const buffer = await canvas.evaluate((element) => {
+      const node = element as HTMLCanvasElement;
+      return { width: node.width, height: node.height };
+    });
+    expect(Math.abs(buffer.height - canvasBox!.height)).toBeLessThanOrEqual(2);
+    expect(Math.abs(buffer.width - canvasBox!.width)).toBeLessThanOrEqual(2);
+  });
+
   test("keeps the whole city in frame when the panel changes size", async ({ page }) => {
     await login(page, "operator");
     await page.goto("/twin");
