@@ -166,9 +166,9 @@ positions, every one within a lane offset of a carriageway, one ring per cascade
 a signal head on every junction, markings only on avenues, and the emergency count
 following incidents with a cap.
 
-**Unverified:** that the turning radius *looks* right, and that the vehicle spacing
-reads naturally at speed. No browser was available to this environment (see §19), so
-these were checked geometrically and never watched.
+**Unverified:** that the turning radius *looks* right and that the vehicle spacing reads
+naturally at speed. These were checked geometrically and by the browser tests asserting
+the canvas is drawing, never watched. See §19.
 
 ## 6. Phase 3 — camera control
 
@@ -339,8 +339,9 @@ frame rate in CI says nothing about a user's laptop, so **no absolute FPS is ass
 anywhere** and the only frame-rate number in the UI is measured in the viewer's own
 browser over the last second, labelled as such.
 
-**Unverified:** actual GPU frame time, and the initial-time-to-first-frame figure. Both
-need a browser with a real GPU; see §19.
+**Unverified:** actual GPU frame time and the initial-time-to-first-frame figure. Both
+need a real GPU; CI runs on a shared VM with software rendering, whose numbers would
+describe the runner rather than anyone's machine. See §19.
 
 ## 12. Phase 9 — Canva compatibility
 
@@ -361,8 +362,8 @@ design source exists outside this repository, this report cannot speak to it.
 
 ## 13. Phase 10 — responsiveness and accessibility
 
-**Partial: the properties are built and partly asserted; no browser sweep was run this
-session.**
+**Partial: the properties are built and the browser sweep passes in CI; the
+screen-reader pass has not been done.**
 
 - **No horizontal overflow.** The twin page's main grid is
   `xl:grid-cols-[minmax(0,1fr)_340px]` — the `minmax(0,…)` is what stops a wide child
@@ -381,8 +382,10 @@ session.**
 - **WebGL absent** produces a labelled `role="img"` fallback saying the map view below
   shows the same assets and that every action still exists.
 
-**Unverified this session:** a screen-reader pass, and any viewport other than the two
-E2E sizes. No browser was obtainable, so the E2E sweep was not executed here.
+**Verified in CI:** the overflow sweep at a narrow viewport across 19 authenticated
+routes, and the phone-viewport test on `/twin`.
+
+**Unverified:** a screen-reader pass, and any viewport in between the two E2E sizes.
 
 ## 14. Phase 11 — a real end-to-end workflow
 
@@ -433,7 +436,7 @@ backend and produced a row.
 | `npm audit` | 0 vulnerabilities |
 | Route smoke, 14 pages | all 200 |
 | `--legacy-peer-deps` in CI | none |
-| Playwright E2E | **not executed here** — see §19 |
+| Playwright E2E | **85 passed, 0 failed** in CI (was 81) — see §19 |
 
 No assertion was deleted or weakened to make anything pass. Three tests were corrected
 where the test itself was wrong, and each is explained in its commit: a top-down fit
@@ -446,7 +449,7 @@ new scene components.
 
 ## 16. Phase 13 — commits
 
-Ten commits, each one independently reviewable:
+Eleven commits, each one independently reviewable:
 
 ```
 65e7739  fixing the missing 3d controls dependency
@@ -460,6 +463,8 @@ d44f2e2  showing how a failure spreads
 9554bdf  measuring the scene instead of guessing at it
 bc45448  testing the new ways in
 d12fcdf  removing a scratch probe that should not have been committed
+bcb96c6  reporting what was changed and what was not checked
+ee3c74b  fixing two browser tests that could not fail honestly
 ```
 
 The dependency fix is commits 1 and 2, with no visual change mixed in. Each later
@@ -468,7 +473,7 @@ does not touch the panels.
 
 ## 17. What is different in the repository
 
-Twenty-one files changed, roughly 3,100 lines added.
+Twenty-two files changed, roughly 3,100 lines added.
 
 New: `lib/run-diff.ts`, `components/city3d/{scene-stats,run-compare-panel}.tsx`,
 `types/three-orbit-controls.d.ts`, and four test files.
@@ -497,22 +502,36 @@ Worth naming, because they were live:
 
 ## 19. What could not be verified, and why
 
-**No browser was available.** `npx playwright install chromium` failed on download in
-this environment, so the Playwright suite was **not run** and no frame was visually
-inspected. The four new E2E tests are written and type-checked but unexecuted. CI will
-be the first execution.
+**No browser was available locally.** `npx playwright install chromium` failed on
+download in this environment, so the suite could not be run here and no frame was
+visually inspected.
 
-This means, concretely:
+**It was then run in CI, and passed: 85 of 85.** That includes the four tests added in
+this work, and it means the browser-level claims are now verified rather than pending.
+The first attempt failed on two of them; both were my tests being wrong, not the app —
+one matched `"Draw calls"` as a substring that also appears in the summary line above
+it, and one asserted a select was visible before checking whether the database held two
+runs to populate it. The fixes are in `ee3c74b` and are described in §16.
 
-- **Unverified:** that the city *looks* right — proportions, lighting, whether the
-  turning radius reads naturally, whether the new entrance canopies and roof detail are
-  visible at the default camera distance, whether the cascade rings are legible against
-  the ground.
-- **Unverified:** actual frame rate, GPU frame time, and time to first frame.
-- **Unverified:** the screen-reader pass, and any viewport beyond the two E2E sizes.
-- **Unverified:** the PostgreSQL 16 parity job. It ran green on the previous PR
-  (`41a04e5`) and nothing in this work touches the schema, migrations or queries, but
-  it was not re-run here.
+What the 85 tests do **not** establish:
+
+- **Unverified:** that the city *looks* right. A test can prove the canvas is not one
+  flat colour; it cannot see whether the proportions are convincing, whether the turning
+  radius reads naturally, whether the entrance canopies and roof detail are visible at
+  the default camera distance, or whether the cascade rings are legible against the
+  ground. Someone has to open the page.
+- **Unverified:** real frame rate and GPU frame time. The CI runner is a shared VM with
+  software rendering; its numbers would describe the runner, not a user's machine. This
+  is why no FPS is asserted anywhere and why the UI measures it client-side.
+- **Unverified:** the screen-reader pass. Accessibility is covered structurally —
+  labels, roles, non-colour encodings, reduced-motion handling — but no assistive
+  technology was driven through this session.
+- **Partially verified:** viewports. The E2E sweep covers a narrow and a desktop width
+  across 19 authenticated routes including `/twin` and `/resilience`; tablet widths and
+  unusual aspect ratios were checked in the model maths (four aspect ratios for the fit
+  distance) but not on a screen.
+- **Verified in CI:** PostgreSQL 16 parity now passes in this run, not only in the
+  previous one.
 
 What *was* substituted: scene-graph assertions through `@react-three/test-renderer`,
 which build the real three.js objects the browser would and can prove a scene is not
@@ -528,10 +547,12 @@ half-written. Two changes fix it for good — the dependency is gone, and the np
 that crashes is no longer used — and both are verified from an empty `node_modules`.
 
 The 3D work fixed six real defects and added what the brief asked for across visuals,
-animation, camera, panels, cascade visualisation and comparison. 107 unit tests pass,
-277 backend tests pass, the build compiles, and a complete incident-to-verified-task
-workflow ran against the live stack with every step audited.
+animation, camera, panels, cascade visualisation and comparison. 107 unit tests and 85
+browser tests pass, 277 backend tests pass, the build compiles, PostgreSQL 16 parity
+holds, and a complete incident-to-verified-task workflow ran against the live stack with
+every step audited.
 
-What is honestly unknown is how any of it looks, and how fast it runs on real hardware,
-because there was no browser to look with. Those are the two things to check first, and
-§19 says exactly which claims are waiting on that.
+The honest gap is perception. The browser suite proves the scene draws, animates, stays
+inside its panel and answers input; it cannot say whether the city looks convincing or
+how fast it runs on real hardware. Those are the two things to check first by opening
+the page, and §19 lists exactly which claims are waiting on that.
