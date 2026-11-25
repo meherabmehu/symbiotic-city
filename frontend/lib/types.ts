@@ -541,3 +541,99 @@ export interface DashboardBundle {
   my_open_tasks: number;
   unread_notifications: number;
 }
+
+/* ------------------------------------------------------------ risk heatmap */
+
+/** One band of the resilience heatmap legend, as the backend describes it. */
+export interface HeatmapLegendEntry {
+  band: string;
+  label: string;
+  threshold: number;
+  description: string;
+  color_token: string;
+}
+
+/** A zone's exposure, scored from the latest simulated run. */
+export interface HeatmapZone {
+  zone_id: number;
+  code: string;
+  name: string;
+  district: string;
+  population: number;
+  center_x: number;
+  center_y: number;
+  risk_score: number;
+  risk_band: string;
+  asset_count: number;
+  assets_failed: number;
+  assets_degraded: number;
+  population_at_risk: number;
+  drivers: string[];
+  top_assets: {
+    asset_id: number;
+    code: string;
+    name: string;
+    category: string;
+    status: string;
+    map_x: number;
+    map_y: number;
+    criticality: number;
+    criticality_index: number;
+    stored_impact: string;
+    risk_score: number;
+  }[];
+}
+
+/** An asset's exposure across the whole city, for the per-building tint. */
+export interface HeatmapAsset {
+  asset_id: number;
+  code: string;
+  name: string;
+  category: string;
+  map_x: number;
+  map_y: number;
+  risk_score: number;
+  risk_band: string;
+  stored_impact: string;
+  criticality_index: number;
+}
+
+export interface Heatmap {
+  source: "latest" | "run" | "baseline";
+  zones: HeatmapZone[];
+  assets: HeatmapAsset[];
+  legend: HeatmapLegendEntry[];
+  assumptions: Record<string, string>;
+  runs: { run_id: number | null; code: string | null; created_at: string | null };
+  model: { impact_weight: number; criticality_weight: number; impact_levels: Record<string, number> };
+  totals: { zones: number; population_at_risk: number; assets_failed: number; assets_degraded: number };
+  generated_at: string;
+}
+
+/* ------------------------------------------------------------- time travel */
+
+/** One recorded change in the twin's history, as `/resilience/timetravel` reports it. */
+export interface TimelineStep {
+  index: number;
+  at: string;
+  kind: "status" | "incident" | "response" | "simulation" | "design" | "dispatch" | string;
+  summary: string;
+  detail: string;
+  from?: string | null;
+  to?: string | null;
+  asset_id?: number | null;
+  asset_code?: string | null;
+  was?: string | null;
+  now?: string | null;
+}
+
+export interface Timeline {
+  window: { since: string; until: string };
+  steps: TimelineStep[];
+  step_count: number;
+  total_changes: number;
+  truncated: boolean;
+  snapshot_at_end: Record<string, unknown>;
+  sources: Record<string, number>;
+  notes: string[];
+}
