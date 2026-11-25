@@ -55,6 +55,8 @@ export interface City3DProps {
   onSelect?: (node: TwinNode | null) => void;
   showEdges?: boolean;
   showZones?: boolean;
+  /** Zone to emphasise, e.g. the row chosen in the heatmap panel. */
+  selectedZone?: string | null;
   showTraffic?: boolean;
   showScenery?: boolean;
   quality?: Quality;
@@ -92,6 +94,7 @@ export function City3D(props: City3DProps) {
     onSelect,
     showEdges = true,
     showZones = true,
+    selectedZone = null,
     showTraffic = true,
     showScenery = true,
     quality = "balanced",
@@ -227,7 +230,12 @@ export function City3D(props: City3DProps) {
 
         <Suspense fallback={null}>
           <Ground reducedTexture={effectiveQuality === "low"} />
-          <ZoneDiscs zones={model.zones} heat={overlay?.heat} show={showZones} />
+          <ZoneDiscs
+            zones={model.zones}
+            heat={overlay?.heat}
+            show={showZones}
+            selectedZone={selectedZone}
+          />
           <Roads model={model} />
           <Scenery model={model} enabled={sceneryOn} />
           <Traffic model={model} enabled={trafficOn} />

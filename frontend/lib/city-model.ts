@@ -531,13 +531,24 @@ export function resolveVisualStatus(
   overlay?: { impact?: "failed" | "degraded" | "affected"; recovering?: boolean } | null,
 ): VisualStatus {
   const live = visualStatusFor(liveStatus);
-  if (overlay?.recovering) return "recovering";
+
+  // Maintenance is somebody's scheduled work and outranks every overlay. Showing
+  // a building as fine while an engineer is inside it with the power off would be
+  // a lie the rest of the screen does not correct.
+  if (live === "maintenance") return "maintenance";
+
+  // Recovering is a statement about a transition in progress: an approved plan
+  // whose tasks are not yet verified. It is only ever shown over an asset the
+  // database still considers down or degraded -- never over a working one, and
+  // never as a step towards "operational", which only the backend can declare.
+  if (overlay?.recovering && (live === "failed" || live === "degraded")) return "recovering";
+
   if (!overlay?.impact) return live;
+
   // A planned failure cannot downgrade an asset that is already worse.
   if (overlay.impact === "failed" && live !== "failed") return "failed";
-  if (overlay.impact === "degraded" && (live === "operational" || live === "maintenance")) {
-    return "degraded";
-  }
+  if (overlay.impact === "degraded" && live === "operational") return "degraded";
+
   return live;
 }
 

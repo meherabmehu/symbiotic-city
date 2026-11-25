@@ -38,6 +38,7 @@ export interface TwinViewProps {
   onSelect?: (node: TwinNode | null) => void;
   showEdges?: boolean;
   showZones?: boolean;
+  selectedZone?: string | null;
   height?: number;
 }
 
@@ -50,6 +51,7 @@ export function TwinView({
   onSelect,
   showEdges = true,
   showZones = true,
+  selectedZone = null,
   height = 560,
 }: TwinViewProps) {
   const [quality, setQuality] = useState<Quality>("balanced");
@@ -183,6 +185,7 @@ export function TwinView({
           onSelect={select}
           showEdges={showEdges}
           showZones={showZones}
+          selectedZone={selectedZone}
           showTraffic={showTraffic}
           showScenery={showScenery}
           quality={quality}

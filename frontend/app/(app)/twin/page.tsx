@@ -6,13 +6,15 @@
  */
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
   ArrowUpRight,
   Cpu,
+  Flame,
+  History,
   Layers,
   Network,
   Play,
@@ -20,6 +22,11 @@ import {
 } from "lucide-react";
 import { ZoneSummary } from "@/components/city-twin";
 import { TwinView } from "@/components/city3d/twin-view";
+import { HeatmapPanel } from "@/components/city3d/heatmap-panel";
+import { ReplayPanel } from "@/components/city3d/replay-panel";
+import { TimelinePanel, presentFrame, timelineOverlay } from "@/components/city3d/timeline-panel";
+import { frameAt, statusSteps } from "@/lib/timeline";
+import type { City3DOverlay } from "@/components/city3d/city-3d";
 import {
   Alert,
   Badge,
@@ -35,7 +42,15 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatNumber, percent } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
-import type { TwinGraph, TwinNode } from "@/lib/types";
+import type {
+  Heatmap,
+  Timeline,
+  ListResponse,
+  SimulationRun,
+  SimulationRunDetail,
+  TwinGraph,
+  TwinNode,
+} from "@/lib/types";
 
 const LEGEND_FILTERS = [
   { value: "all", label: "All statuses" },
@@ -52,7 +67,68 @@ export default function TwinPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [showEdges, setShowEdges] = useState(true);
   const [showZones, setShowZones] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [heatOn, setHeatOn] = useState(false);
+  const [heatZone, setHeatZone] = useState<string | null>(null);
+  const [replayRunId, setReplayRunId] = useState<number | null>(null);
+  const [replayLevels, setReplayLevels] = useState<Map<number, "failed" | "degraded" | "affected">>(new Map());
+  const [timelineIndex, setTimelineIndex] = useState<number | null>(null);
   const { data, loading, error, reload } = useAsync<TwinGraph>(() => api.get("/twin/graph"), []);
+
+  // Overlay data is fetched separately from the twin itself: if either analytical
+  // layer fails, the city still draws and the failure is reported where it
+  // belongs instead of blanking the screen.
+  const heatmap = useAsync<Heatmap>(() => api.get("/resilience/heatmap"), []);
+  const runs = useAsync<SimulationRun[]>(async () => {
+    const response: ListResponse<SimulationRun> = await api.list("/simulations?page_size=20");
+    return response.data;
+  }, []);
+  const timeline = useAsync<Timeline>(() => api.get("/resilience/timetravel"), []);
+  const replayDetail = useAsync<SimulationRunDetail>(
+    () => (replayRunId ? api.get(`/simulations/${replayRunId}`) : Promise.resolve(null as unknown as SimulationRunDetail)),
+    [replayRunId],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReducedMotion(query.matches);
+    const handler = (event: MediaQueryListEvent) => setReducedMotion(event.matches);
+    query.addEventListener("change", handler);
+    return () => query.removeEventListener("change", handler);
+  }, []);
+
+  const overlay = useMemo<City3DOverlay>(() => {
+    const result: City3DOverlay = {};
+    if (replayLevels.size > 0) {
+      result.impacts = [...replayLevels].map(([assetId, level]) => ({
+        asset_id: assetId,
+        impact_level: level,
+      })) as City3DOverlay["impacts"];
+    }
+    if (heatOn && heatmap.data) {
+      result.heat = new Map(
+        heatmap.data.zones.map((zone) => [zone.code, { score: zone.risk_score, band: zone.risk_band }]),
+      );
+    }
+    // Timeline overrides are additive: they describe the past, so they coexist
+    // with a replay or a heat layer rather than replacing it.
+    if (timeline.data && timelineIndex !== null) {
+      const frame = frameAt(timeline.data, data?.nodes ?? [], timelineIndex);
+      const overrides = timelineOverlay(frame, data?.nodes ?? []);
+      result.impacts = [...(result.impacts ?? []), ...(overrides as NonNullable<City3DOverlay["impacts"]>)];
+      result.recovering = [...frame.maintenance];
+    }
+    return result;
+  }, [replayLevels, heatOn, heatmap.data, timeline.data, timelineIndex, data]);
+
+  const timelineFrame = useMemo(
+    () =>
+      timelineIndex === null
+        ? presentFrame(timeline.data, data?.nodes ?? [])
+        : frameAt(timeline.data, data?.nodes ?? [], timelineIndex),
+    [timelineIndex, timeline.data, data],
+  );
 
   const graph = useMemo(() => {
     if (!data) return null;
@@ -144,10 +220,12 @@ export default function TwinPage() {
               graph={graph}
               loading={loading}
               error={error}
+              overlay={overlay}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
               showEdges={showEdges}
               showZones={showZones}
+              selectedZone={heatZone}
               height={560}
             />
           </Panel>
@@ -259,6 +337,62 @@ export default function TwinPage() {
                 incident is open.
               </p>
             )}
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Exposure heatmap"
+              subtitle="Zone risk from the latest simulated run"
+              icon={<Flame className="h-4 w-4" />}
+            />
+            <HeatmapPanel
+              heatmap={heatmap.data}
+              loading={heatmap.loading}
+              error={heatmap.error}
+              enabled={heatOn}
+              onEnable={setHeatOn}
+              selectedZone={heatZone}
+              onSelectZone={setHeatZone}
+            />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Time travel"
+              subtitle="Rewind the twin through its recorded history"
+              icon={<History className="h-4 w-4" />}
+            />
+            <TimelinePanel
+              timeline={timeline.data}
+              nodes={data?.nodes ?? []}
+              loading={timeline.loading}
+              error={timeline.error}
+              frame={timelineFrame}
+              onScrub={setTimelineIndex}
+              onReset={() => setTimelineIndex(null)}
+              onSelectAsset={(id) => {
+                const node = data?.nodes.find((candidate) => candidate.id === id) ?? null;
+                setSelected(node);
+              }}
+            />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Replay a cascade"
+              subtitle="Stored simulation results, played over the live map"
+              icon={<History className="h-4 w-4" />}
+            />
+            <ReplayPanel
+              runs={runs.data ?? []}
+              selectedRunId={replayRunId}
+              onSelectRun={setReplayRunId}
+              detail={replayDetail.data ?? null}
+              loading={runs.loading || replayDetail.loading}
+              error={runs.error ?? replayDetail.error}
+              reducedMotion={reducedMotion}
+              onFrame={(levels) => setReplayLevels(levels)}
+            />
           </Panel>
 
           <Panel>
