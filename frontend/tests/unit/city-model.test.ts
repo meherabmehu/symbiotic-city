@@ -445,6 +445,53 @@ describe("city model", () => {
     }
   });
 
+  it("keeps scenery off every carriageway, not just its own", () => {
+    // A tree in the middle of a road is the clearest sign that a city is
+    // decoration rather than a place. Checking against the nearest avenue only is
+    // not enough: a perpendicular street can run through a kerbside slot.
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    for (const prop of model.scenery) {
+      for (const segment of model.grid.segments) {
+        const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+        const across = horizontal
+          ? Math.abs(prop.position.z - segment.z1)
+          : Math.abs(prop.position.x - segment.x1);
+        const within = horizontal
+          ? prop.position.x >= Math.min(segment.x1, segment.x2) &&
+            prop.position.x <= Math.max(segment.x1, segment.x2)
+          : prop.position.z >= Math.min(segment.z1, segment.z2) &&
+            prop.position.z <= Math.max(segment.z1, segment.z2);
+        if (within) expect(across).toBeGreaterThan(segment.width / 2);
+      }
+    }
+  });
+
+  it("puts street furniture along the streets rather than scattered at random", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    const trees = model.scenery.filter((prop) => prop.kind === "tree");
+    expect(trees.length).toBeGreaterThan(20);
+
+    // Most trees should be nearer a road than the middle of a block: the kerbs are
+    // where they are placed, and a uniform scatter would not clear this.
+    const nearRoad = trees.filter((prop) =>
+      model.grid.segments.some((segment) => {
+        const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+        const across = horizontal
+          ? Math.abs(prop.position.z - segment.z1)
+          : Math.abs(prop.position.x - segment.x1);
+        return across < 9;
+      }),
+    );
+    expect(nearRoad.length / trees.length).toBeGreaterThan(0.5);
+  });
+
+  it("draws no parked cars, because a car in a field is not scenery", () => {
+    // Moving traffic is its own instanced mesh and carries no asset data. A static
+    // "car" prop scattered at random would read as abandoned vehicles.
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    expect(model.scenery.some((prop) => (prop.kind as string) === "car")).toBe(false);
+  });
+
   it("builds the same city twice from the same data", () => {
     // A deterministic layout is what makes placement testable at all, and stops
     // the city from rearranging itself on every refresh.

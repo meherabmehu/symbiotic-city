@@ -646,7 +646,9 @@ export function clampTarget(target: [number, number, number]): [number, number, 
 /* ------------------------------------------------------------ scene props */
 
 export interface ScatterProp {
-  kind: "tree" | "car" | "bench" | "lamp";
+  // No "car": a static vehicle placed by a scatter algorithm is either abandoned
+  // or in the road. Moving traffic is drawn separately as instanced geometry.
+  kind: "tree" | "bench" | "lamp";
   position: Point3;
   rotation: number;
   scale: number;
@@ -659,41 +661,220 @@ export interface ScatterProp {
  * makes "decorative vs operational" a structural guarantee rather than a naming
  * convention: nothing in the scene can select a tree and read a status from it.
  */
-export function buildScenery(nodes: TwinNode[], grid: RoadGrid, count = 220): ScatterProp[] {
+/**
+ * Street furniture, scattered on the land the roads and plots leave free.
+ *
+ * Three things matter here and all three were wrong at some point:
+ *
+ *  - The plots come from the *placed* assets. Reading raw `map_x`/`map_y` puts
+ *    trees inside buildings whose plots were moved apart by `separatePlots`.
+ *  - Nothing may sit on a carriageway. A tree in the middle of an avenue is the
+ *    most obvious tell that a city is decoration.
+ *  - Lamps and trees go *beside* roads, not scattered uniformly. Street furniture
+ *    at random looks like litter; street furniture lining a kerb looks like a
+ *    street. Roads are the generator, so each prop is placed relative to one.
+ *
+ * Cars are not scenery. A parked car in a random field is not a thing that
+ * exists; moving traffic is drawn separately and carries no asset data.
+ */
+export function buildScenery(assets: PlacedAsset[], grid: RoadGrid, count = 320): ScatterProp[] {
   const rng = makeRng(0xc0ffee);
-  const plots = nodes.map((node) => {
-    const { x, z } = toScene(node.map_x, node.map_y);
-    return { x, z, half: footprintFor(node.category).plot / 2 + 1.5 };
-  });
+  const plots = assets.map((asset) => ({
+    x: asset.position.x,
+    z: asset.position.z,
+    half: asset.footprint.plot / 2 + 1.2,
+  }));
+
+  const insidePlot = (x: number, z: number) =>
+    plots.some((plot) => Math.abs(plot.x - x) < plot.half && Math.abs(plot.z - z) < plot.half);
+
+  /** Distance from a point to the nearest carriageway edge, or Infinity. */
+  const clearOfRoads = (x: number, z: number, margin: number) =>
+    grid.segments.every((segment) => {
+      const horizontal = Math.abs(segment.z1 - segment.z2) < 0.001;
+      const across = horizontal
+        ? Math.abs(z - segment.z1) - segment.width / 2
+        : Math.abs(x - segment.x1) - segment.width / 2;
+      // Only the road's own span constrains the point; beyond its ends there is no
+      // carriageway to avoid.
+      const along = horizontal
+        ? x >= Math.min(segment.x1, segment.x2) - 2 && x <= Math.max(segment.x1, segment.x2) + 2
+        : z >= Math.min(segment.z1, segment.z2) - 2 && z <= Math.max(segment.z1, segment.z2) + 2;
+      return !along || across > margin;
+    });
 
   const props: ScatterProp[] = [];
-  let attempts = 0;
-  while (props.length < count && attempts < count * 40) {
-    attempts += 1;
-    const x = (rng() * 2 - 1) * CITY_EXTENT * 0.97;
-    const z = (rng() * 2 - 1) * CITY_EXTENT * 0.97;
-    if (plots.some((plot) => Math.abs(plot.x - x) < plot.half && Math.abs(plot.z - z) < plot.half)) {
-      continue;
-    }
-    // Keep off the carriageway.
-    const onRoad = grid.segments.some((segment) => {
-      const horizontal = Math.abs(segment.z1 - segment.z2) < 0.001;
-      return horizontal
-        ? Math.abs(z - segment.z1) < segment.width / 2 + 1.2
-        : Math.abs(x - segment.x1) < segment.width / 2 + 1.2;
-    });
-    if (onRoad) continue;
+  const push = (kind: ScatterProp["kind"], x: number, z: number, scale: number, rotation: number) => {
+    if (Math.abs(x) > CITY_EXTENT * 0.97 || Math.abs(z) > CITY_EXTENT * 0.97) return;
+    if (insidePlot(x, z)) return;
+    props.push({ kind, position: { x, y: 0, z }, rotation, scale });
+  };
 
-    const roll = rng();
-    const kind: ScatterProp["kind"] = roll < 0.62 ? "tree" : roll < 0.85 ? "car" : roll < 0.95 ? "bench" : "lamp";
-    props.push({
-      kind,
-      position: { x, y: 0, z },
-      rotation: rng() * Math.PI * 2,
-      scale: 0.7 + rng() * 0.6,
-    });
+  // Street furniture follows the kerbs: a lamp or a tree every few units along
+  // each avenue, alternating sides so neither side is bare.
+  for (const segment of grid.segments) {
+    const horizontal = Math.abs(segment.z1 - segment.z2) < 0.001;
+    const length = horizontal
+      ? Math.abs(segment.x2 - segment.x1)
+      : Math.abs(segment.z2 - segment.z1);
+    const start = horizontal ? Math.min(segment.x1, segment.x2) : Math.min(segment.z1, segment.z2);
+    const step = 7.5;
+
+    for (let offset = step; offset < length - step; offset += step) {
+      // Alternate sides, and jitter slightly so the line is not mechanically even.
+      const side = Math.round(offset / step) % 2 === 0 ? 1 : -1;
+      const jitter = (rng() - 0.5) * 1.2;
+      // One kerb-width clear of the carriageway. The margin is generous because a
+      // prop only has to touch the *edge* of a road to look like it is in it, and
+      // another avenue's carriageway can be closer than this one's centre.
+      const gap = segment.width / 2 + 3.4 + rng() * 0.8;
+      const along = start + offset + jitter;
+
+      const x = horizontal ? along : segment.x1 + side * gap;
+      const z = horizontal ? segment.z1 + side * gap : along;
+
+      if (insidePlot(x, z)) continue;
+      // Verify against *every* avenue, not just the one this slot belongs to: a
+      // perpendicular street can run right through a kerbside spot.
+      if (!clearOfRoads(x, z, 1.5)) continue;
+      // One in four kerbside slots is a streetlight instead of a tree; lights are
+      // what make a night city read as a city.
+      const kind: ScatterProp["kind"] = rng() < 0.34 ? "lamp" : "tree";
+      push(kind, x, z, 0.75 + rng() * 0.45, rng() * Math.PI * 2);
+    }
   }
-  return props;
+
+  // Then parks and squares in the leftover blocks, clusters rather than singles.
+  let clusters = 0;
+  let guard = 0;
+  while (clusters < 26 && guard < 600) {
+    guard += 1;
+    const cx = (rng() * 2 - 1) * CITY_EXTENT * 0.9;
+    const cz = (rng() * 2 - 1) * CITY_EXTENT * 0.9;
+    if (insidePlot(cx, cz) || !clearOfRoads(cx, cz, 3)) continue;
+
+    clusters += 1;
+    const size = 4 + Math.floor(rng() * 6);
+    const radius = 4 + rng() * 5;
+    for (let index = 0; index < size; index += 1) {
+      const angle = rng() * Math.PI * 2;
+      const distance = Math.sqrt(rng()) * radius;
+      const x = cx + Math.cos(angle) * distance;
+      const z = cz + Math.sin(angle) * distance;
+      if (!clearOfRoads(x, z, 1.6)) continue;
+      push("tree", x, z, 0.7 + rng() * 0.7, rng() * Math.PI * 2);
+    }
+    // A bench or two facing the green.
+    if (rng() < 0.6) push("bench", cx + radius * 0.3, cz, 1, rng() * Math.PI * 2);
+  }
+
+  return props.slice(0, count);
+}
+
+/* --------------------------------------------------------------- sidewalks */
+
+export interface Pavement {
+  /** Centre of the slab. */
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  /** Rotation about Y; pavements run parallel to their avenue. */
+  rotation: number;
+}
+
+/**
+ * Kerbs, as flat strips either side of every avenue.
+ *
+ * A road drawn directly on the ground reads as a painted line, not as a street:
+ * what makes a street legible at this scale is the change of level and colour at
+ * its edge. These are two thin slabs per avenue -- flat, cheap, and they are what
+ * the street furniture actually stands on.
+ *
+ * They stop short of intersections so the crossing stays continuous.
+ */
+export function buildPavements(grid: RoadGrid): Pavement[] {
+  const KERB = 2.6;
+  const pavements: Pavement[] = [];
+
+  for (const segment of grid.segments) {
+    const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+    const from = horizontal
+      ? Math.min(segment.x1, segment.x2)
+      : Math.min(segment.z1, segment.z2);
+    const to = horizontal
+      ? Math.max(segment.x1, segment.x2)
+      : Math.max(segment.z1, segment.z2);
+    const length = to - from;
+    const centre = from + length / 2;
+    const at = horizontal ? segment.z1 : segment.x1;
+    const offset = segment.width / 2 + KERB / 2;
+
+    for (const side of [-1, 1]) {
+      pavements.push({
+        x: horizontal ? centre : at + side * offset,
+        z: horizontal ? at + side * offset : centre,
+        width: horizontal ? length : KERB,
+        depth: horizontal ? KERB : length,
+        rotation: 0,
+      });
+    }
+  }
+
+  return pavements;
+}
+
+/* ----------------------------------------------------------------- parking */
+
+export interface ParkingBay {
+  x: number;
+  z: number;
+  /** Marked bays, arranged in a row. */
+  bays: number;
+  rotation: number;
+}
+
+/**
+ * Parking aprons beside a few streets.
+ *
+ * Not every road: a bay on every kerb would be as monotonous as none. These are
+ * placed where a block has room, which is the same rule a planner would use.
+ */
+export function buildParking(assets: PlacedAsset[], grid: RoadGrid): ParkingBay[] {
+  const rng = makeRng(0x9a12c3);
+  const bays: ParkingBay[] = [];
+
+  for (const segment of grid.segments) {
+    const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+    const length = horizontal
+      ? Math.abs(segment.x2 - segment.x1)
+      : Math.abs(segment.z2 - segment.z1);
+    if (length < 40) continue;
+
+    // Two candidate aprons per avenue, offset from the ends.
+    for (const fraction of [0.28, 0.72]) {
+      if (rng() > 0.55) continue;
+      const start = horizontal ? Math.min(segment.x1, segment.x2) : Math.min(segment.z1, segment.z2);
+      const along = start + length * fraction;
+      const side = rng() < 0.5 ? -1 : 1;
+      const gap = segment.width / 2 + 7;
+
+      const x = horizontal ? along : segment.x1 + side * gap;
+      const z = horizontal ? segment.z1 + side * gap : along;
+
+      // Only where the apron is actually clear of buildings and of the traffic.
+      const clear = assets.every(
+        (asset) =>
+          Math.abs(asset.position.x - x) > asset.footprint.plot / 2 + 3 ||
+          Math.abs(asset.position.z - z) > asset.footprint.plot / 2 + 3,
+      );
+      if (!clear) continue;
+
+      bays.push({ x, z, bays: 3 + Math.floor(rng() * 4), rotation: horizontal ? 0 : Math.PI / 2 });
+    }
+  }
+
+  return bays;
 }
 
 /* ------------------------------------------------------------------ edges */
@@ -732,6 +913,10 @@ export interface CityModel {
   lanes: TrafficLane[];
   zones: ZoneHull[];
   scenery: ScatterProp[];
+  /** Kerbs beside every avenue: what makes a road read as a street. */
+  pavements: Pavement[];
+  /** Parking aprons where a block has room for one. */
+  parking: ParkingBay[];
 }
 
 /**
@@ -751,6 +936,8 @@ export function buildCityModel(graph: TwinGraph | null): CityModel | null {
     grid,
     lanes: buildTrafficLanes(grid),
     zones: buildZoneHulls(graph.zones),
-    scenery: buildScenery(graph.nodes, grid),
+    scenery: buildScenery(assets, grid),
+    pavements: buildPavements(grid),
+    parking: buildParking(assets, grid),
   };
 }

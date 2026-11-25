@@ -22,6 +22,8 @@ import {
   CITY_EXTENT,
   vehiclePosition,
   type CityModel,
+  type ParkingBay,
+  type Pavement,
   type PlacedEdge,
   type TrafficLane,
   type ZoneHull,
@@ -376,10 +378,6 @@ const PROP_PARTS: Record<
   tree: [
     { geometry: "cylinder", args: [0.16, 0.22, 1.8, 6], y: 0.9, colour: "#2b2119" },
     { geometry: "icosahedron", args: [1.15, 0], y: 2.4, colour: "#1f6f52", flat: true },
-  ],
-  car: [
-    { geometry: "box", args: [1.7, 0.62, 0.95], y: 0.42, colour: "#2c4a6e" },
-    { geometry: "box", args: [1.0, 0.36, 0.82], y: 0.82, colour: "#101b2b" },
   ],
   lamp: [
     { geometry: "cylinder", args: [0.07, 0.1, 4, 6], y: 2, colour: "#33465e" },
