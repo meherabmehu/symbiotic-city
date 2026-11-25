@@ -19,12 +19,14 @@ import {
   Network,
   Play,
   Share2,
+  ShieldAlert,
 } from "lucide-react";
 import { ZoneSummary } from "@/components/city-twin";
 import { TwinView } from "@/components/city3d/twin-view";
 import { HeatmapPanel } from "@/components/city3d/heatmap-panel";
 import { ReplayPanel } from "@/components/city3d/replay-panel";
 import { TimelinePanel, presentFrame, timelineOverlay } from "@/components/city3d/timeline-panel";
+import { LensPanel, type LensMode } from "@/components/city3d/lens-panel";
 import { frameAt, statusSteps } from "@/lib/timeline";
 import type { City3DOverlay } from "@/components/city3d/city-3d";
 import {
@@ -43,7 +45,9 @@ import { useAuth } from "@/lib/auth";
 import { formatNumber, percent } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
 import type {
+  CriticalityIndex,
   Heatmap,
+  InvestmentPlan,
   Timeline,
   ListResponse,
   SimulationRun,
@@ -70,6 +74,7 @@ export default function TwinPage() {
   const [reducedMotion, setReducedMotion] = useState(false);
   const [heatOn, setHeatOn] = useState(false);
   const [heatZone, setHeatZone] = useState<string | null>(null);
+  const [lens, setLens] = useState<LensMode>("off");
   const [replayRunId, setReplayRunId] = useState<number | null>(null);
   const [replayLevels, setReplayLevels] = useState<Map<number, "failed" | "degraded" | "affected">>(new Map());
   const [timelineIndex, setTimelineIndex] = useState<number | null>(null);
@@ -83,6 +88,8 @@ export default function TwinPage() {
     const response: ListResponse<SimulationRun> = await api.list("/simulations?page_size=20");
     return response.data;
   }, []);
+  const criticality = useAsync<CriticalityIndex>(() => api.get("/resilience/criticality"), []);
+  const investment = useAsync<InvestmentPlan>(() => api.get("/resilience/investment"), []);
   const timeline = useAsync<Timeline>(() => api.get("/resilience/timetravel"), []);
   const replayDetail = useAsync<SimulationRunDetail>(
     () => (replayRunId ? api.get(`/simulations/${replayRunId}`) : Promise.resolve(null as unknown as SimulationRunDetail)),
@@ -111,6 +118,33 @@ export default function TwinPage() {
         heatmap.data.zones.map((zone) => [zone.code, { score: zone.risk_score, band: zone.risk_band }]),
       );
     }
+    // The analytical lens: one number per asset, from whichever ranking is on.
+    if (lens === "criticality" && criticality.data) {
+      result.intensity = new Map(
+        criticality.data.ranking.map((row) => [
+          row.asset_id,
+          { value: row.criticality_index, emphasis: row.criticality_index >= 70 },
+        ]),
+      );
+    } else if (lens === "investment" && investment.data) {
+      const max = investment.data.options.reduce(
+        (best, option) => Math.max(best, option.benefit.population_protected),
+        1,
+      );
+      const byAsset = new Map<number, { value: number; emphasis?: boolean }>();
+      for (const option of investment.data.options) {
+        if (!option.changes_anything) continue;
+        // Several interventions can target one asset; the strongest reading wins,
+        // because that is the one worth acting on.
+        const value = (option.benefit.population_protected / max) * 100;
+        const existing = byAsset.get(option.asset_id);
+        if (!existing || value > existing.value) {
+          byAsset.set(option.asset_id, { value, emphasis: value >= 70 });
+        }
+      }
+      result.intensity = byAsset;
+    }
+
     // Timeline overrides are additive: they describe the past, so they coexist
     // with a replay or a heat layer rather than replacing it.
     if (timeline.data && timelineIndex !== null) {
@@ -120,7 +154,7 @@ export default function TwinPage() {
       result.recovering = [...frame.maintenance];
     }
     return result;
-  }, [replayLevels, heatOn, heatmap.data, timeline.data, timelineIndex, data]);
+  }, [replayLevels, heatOn, heatmap.data, timeline.data, timelineIndex, data, lens, criticality.data, investment.data]);
 
   // Stable identity: the replay panel pushes a frame per animation tick, and a new
   // callback each render would re-run its effect on every frame.
@@ -344,6 +378,26 @@ export default function TwinPage() {
                 incident is open.
               </p>
             )}
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Resilience lens"
+              subtitle="Criticality and investment, drawn on the city"
+              icon={<ShieldAlert className="h-4 w-4" />}
+            />
+            <LensPanel
+              criticality={criticality.data}
+              investment={investment.data}
+              loading={criticality.loading && investment.loading}
+              error={criticality.error ?? investment.error}
+              mode={lens}
+              onMode={setLens}
+              onSelectAsset={(id) => {
+                const node = data?.nodes.find((candidate) => candidate.id === id) ?? null;
+                setSelected(node);
+              }}
+            />
           </Panel>
 
           <Panel>

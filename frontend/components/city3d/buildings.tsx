@@ -222,6 +222,7 @@ export function Building({
   rotation,
   selected,
   castShadow = true,
+  intensity,
   onSelect,
   onHover,
 }: {
@@ -233,6 +234,12 @@ export function Building({
   selected: boolean;
   /** Off on the low quality preset, where the shadow pass costs more than it adds. */
   castShadow?: boolean;
+  /**
+   * A 0-100 reading for an analytical lens (criticality, investment benefit).
+   * Drawn as a vertical column of light beside the building, never as a change to
+   * the building's status colour -- a hypothesis must not look like a status.
+   */
+  intensity?: { value: number; emphasis?: boolean };
   onSelect?: () => void;
   onHover?: (hovering: boolean) => void;
 }) {
@@ -298,6 +305,8 @@ export function Building({
       </group>
 
       <StatusBeacon status={status} height={footprint.height} set={set} />
+
+      {intensity ? <LensColumn value={intensity.value} height={footprint.height} emphasis={intensity.emphasis} /> : null}
     </group>
   );
 }
@@ -359,6 +368,48 @@ function StatusBeacon({
     <mesh position={[0, y, 0]} material={set.beacon}>
       <sphereGeometry args={[0.65, 14, 12]} />
     </mesh>
+  );
+}
+
+/**
+ * The analytical lens over a building.
+ *
+ * A thin column of light whose height and brightness track the reading. It is
+ * deliberately a separate object from the building and uses its own colour ramp,
+ * because the building's colour already means "status" and reusing it would make
+ * a hypothetical look like a state.
+ */
+function LensColumn({
+  value,
+  height,
+  emphasis,
+}: {
+  value: number;
+  height: number;
+  emphasis?: boolean;
+}) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const hue = 200 - (clamped / 100) * 200; // cool blue at 0, red at 100
+  const colour = new THREE.Color().setHSL(hue / 360, 0.85, 0.55);
+  const columnHeight = 3 + (clamped / 100) * Math.max(6, height * 0.6);
+
+  return (
+    <group position={[0, 0, 0]}>
+      <mesh position={[0, columnHeight / 2, 0]}>
+        <cylinderGeometry args={[0.32, 0.32, columnHeight, 8, 1, true]} />
+        <meshBasicMaterial
+          color={colour}
+          transparent
+          opacity={emphasis ? 0.85 : 0.5}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh position={[0, columnHeight + 0.4, 0]}>
+        <sphereGeometry args={[emphasis ? 0.5 : 0.36, 10, 8]} />
+        <meshBasicMaterial color={colour} transparent opacity={0.9} />
+      </mesh>
+    </group>
   );
 }
 
