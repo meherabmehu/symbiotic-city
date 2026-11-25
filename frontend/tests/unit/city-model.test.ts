@@ -14,6 +14,7 @@ import {
   placeAssets,
   resolveVisualStatus,
   toScene,
+  routePosition,
   vehiclePosition,
   visualStatusFor,
 } from "@/lib/city-model";
@@ -223,6 +224,78 @@ describe("traffic lanes", () => {
       expect(Math.abs(lane.offset)).toBeGreaterThan(0);
       expect(Math.abs(lane.offset)).toBeLessThan(3);
     }
+  });
+});
+
+/**
+ * A vehicle's local +x is forward, so its world heading is (cos angle, -sin angle).
+ * Two lanes had this sign inverted, which drove northbound traffic backwards down
+ * the street. Nothing noticed, because a box viewed from above looks the same
+ * either way -- until you look at it from street level.
+ */
+function headingOf(angle: number) {
+  return { x: Math.cos(angle), z: -Math.sin(angle) };
+}
+
+describe("traffic heading and turns", () => {
+  it("faces every vehicle in the direction it is travelling", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    for (const lane of model.lanes) {
+      const here = vehiclePosition(lane, 0, 9, 0.3);
+      const next = vehiclePosition(lane, 0.5, 9, 0.3);
+      const travel = { x: Math.sign(next.x - here.x), z: Math.sign(next.z - here.z) };
+      const heading = headingOf(here.angle);
+      const dot = heading.x * travel.x + heading.z * travel.z;
+      expect(dot, `lane ${lane.id} faces away from its travel direction`).toBeGreaterThan(0.9);
+    }
+  });
+
+  it("turns at intersections instead of driving straight forever", () => {
+    // Straight lanes alone are a conveyor belt: no vehicle ever turns, so nothing
+    // reads as a street network. Routes are loops around blocks, with corners
+    // sampled as arcs.
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    expect(model.routes.length).toBeGreaterThan(0);
+
+    for (const route of model.routes) {
+      expect(route.length).toBeGreaterThan(12);
+      // A loop must visit both axes, otherwise it is a straight line with a
+      // doubling-back artefact at the end.
+      expect(new Set(route.map((point) => Math.round(point.x))).size).toBeGreaterThan(1);
+      expect(new Set(route.map((point) => Math.round(point.z))).size).toBeGreaterThan(1);
+    }
+  });
+
+  it("keeps a turning vehicle at the same speed through corners", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    const route = model.routes[0];
+
+    // Sample at equal time steps. Distance per step must stay roughly constant: if
+    // corners were walked by point index rather than by arc length, a vehicle
+    // would sprint through the turns.
+    const steps = 80;
+    const samples = Array.from({ length: steps }, (_, index) =>
+      routePosition(route, index * 0.1, 12, 0),
+    );
+    const hops = samples
+      .slice(1)
+      .map((point, index) => Math.hypot(point.x - samples[index].x, point.z - samples[index].z));
+    const mean = hops.reduce((sum, hop) => sum + hop, 0) / hops.length;
+    for (const hop of hops) {
+      expect(hop).toBeGreaterThan(mean * 0.6);
+      expect(hop).toBeLessThan(mean * 1.6);
+    }
+  });
+
+  it("follows the loop's direction of travel rather than sliding sideways", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    const route = model.routes[0];
+    const here = routePosition(route, 0, 10, 0.2);
+    const next = routePosition(route, 0.2, 10, 0.2);
+    const heading = headingOf(here.angle);
+    const travel = { x: Math.sign(next.x - here.x), z: Math.sign(next.z - here.z) };
+    const dot = heading.x * travel.x + heading.z * travel.z;
+    expect(dot).toBeGreaterThan(0.5);
   });
 });
 

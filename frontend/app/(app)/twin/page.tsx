@@ -267,6 +267,7 @@ export default function TwinPage() {
               showEdges={showEdges}
               showZones={showZones}
               selectedZone={heatZone}
+              activeIncidents={(data?.nodes ?? []).reduce((sum, node) => sum + (node.active_incidents ?? 0), 0)}
               height={560}
             />
           </Panel>

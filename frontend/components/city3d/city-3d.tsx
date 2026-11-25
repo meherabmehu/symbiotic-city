@@ -33,7 +33,17 @@ import {
 } from "@/lib/city-model";
 import type { Impact, TwinGraph, TwinNode } from "@/lib/types";
 import { Building } from "@/components/city3d/buildings";
-import { DependencyLinks, Ground, Roads, Scenery, Traffic, ZoneDiscs } from "@/components/city3d/city-parts";
+import {
+  DependencyLinks,
+  EmergencyTraffic,
+  Ground,
+  Markings,
+  Roads,
+  Scenery,
+  Traffic,
+  TrafficSignals,
+  ZoneDiscs,
+} from "@/components/city3d/city-parts";
 
 export type Quality = "high" | "balanced" | "low";
 
@@ -67,6 +77,11 @@ export interface City3DProps {
   selectedZone?: string | null;
   showTraffic?: boolean;
   showScenery?: boolean;
+  /**
+   * Active incidents. Used only to decide whether emergency vehicles exist and how
+   * many: a responder appearing is not a claim that this incident caused it.
+   */
+  activeIncidents?: number;
   quality?: Quality;
   /** Camera preset; changing it animates to that pose. */
   mode?: CameraMode;
@@ -105,6 +120,7 @@ export function City3D(props: City3DProps) {
     selectedZone = null,
     showTraffic = true,
     showScenery = true,
+    activeIncidents = 0,
     quality = "balanced",
     mode = "perspective",
     focusId = null,
@@ -249,7 +265,10 @@ export function City3D(props: City3DProps) {
           />
           <Roads model={model} />
           <Scenery model={model} enabled={sceneryOn} />
+          <Markings model={model} />
+          <TrafficSignals model={model} enabled={trafficOn} />
           <Traffic model={model} enabled={trafficOn} />
+          <EmergencyTraffic model={model} enabled={trafficOn} incidents={activeIncidents ?? 0} />
 
           {model.assets.map((asset) => (
             <Building

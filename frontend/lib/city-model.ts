@@ -435,7 +435,129 @@ export function vehiclePosition(
   if (lane.axis === "h") {
     return { x: signed, z: lane.at + lane.offset, angle: lane.direction > 0 ? 0 : Math.PI };
   }
-  return { x: lane.at + lane.offset, z: signed, angle: lane.direction > 0 ? Math.PI / 2 : -Math.PI / 2 };
+
+  // A vehicle's local +x is its forward axis, and rotating that by `angle` about Y
+  // gives (cos angle, 0, -sin angle). Driving +z therefore needs angle -pi/2, not
+  // +pi/2 -- with the sign flipped, northbound traffic drives backwards.
+  return {
+    x: lane.at + lane.offset,
+    z: signed,
+    angle: lane.direction > 0 ? -Math.PI / 2 : Math.PI / 2,
+  };
+}
+
+/* ------------------------------------------------------- turning traffic */
+
+export interface RouteWaypoint {
+  x: number;
+  z: number;
+}
+
+/**
+ * A closed circuit that turns at intersections.
+ *
+ * The lane system moves vehicles in straight lines forever, which is fine for
+ * traffic at a glance and wrong the moment you watch one: no vehicle ever turns,
+ * so every street is a conveyor belt. A route is a rectangle around a block --
+ * four straights joined by corner arcs -- which is what a car circling a block
+ * actually does, and it is why the traffic reads as going somewhere.
+ *
+ * Corners are sampled as short arcs rather than sharp joins so the vehicle's
+ * heading changes smoothly instead of snapping through ninety degrees.
+ */
+export function buildRoutes(grid: RoadGrid): RouteWaypoint[][] {
+  const routes: RouteWaypoint[][] = [];
+  const xs = [...new Set(grid.segments.filter((s) => Math.abs(s.x2 - s.x1) < 0.001).map((s) => s.x1))].sort(
+    (a, b) => a - b,
+  );
+  const zs = [...new Set(grid.segments.filter((s) => Math.abs(s.z2 - s.z1) < 0.001).map((s) => s.z1))].sort(
+    (a, b) => a - b,
+  );
+
+  // Only blocks with a real street on each side are worth circulating.
+  for (let xi = 0; xi < xs.length - 1; xi += 1) {
+    for (let zi = 0; zi < zs.length - 1; zi += 1) {
+      const x0 = xs[xi];
+      const x1 = xs[xi + 1];
+      const z0 = zs[zi];
+      const z1 = zs[zi + 1];
+      if (x1 - x0 < 20 || z1 - z0 < 20) continue;
+
+      // Circulate on the right-hand side of each street, which is what makes the
+      // loop legal traffic rather than a rally circuit.
+      const inset = 1.6;
+      const route: RouteWaypoint[] = [];
+      const corners: [number, number, number][] = [
+        [x0 + inset, z0 + inset, 0],
+        [x1 - inset, z0 + inset, -Math.PI / 2],
+        [x1 - inset, z1 - inset, Math.PI],
+        [x0 + inset, z1 - inset, Math.PI / 2],
+      ];
+
+      for (let c = 0; c < corners.length; c += 1) {
+        const [cx, cz] = corners[c];
+        const [nx, nz] = corners[(c + 1) % corners.length];
+        // Straight run to the next corner, sampled every few units.
+        const dx = nx - cx;
+        const dz = nz - cz;
+        const length = Math.hypot(dx, dz);
+        const steps = Math.max(2, Math.round(length / 4));
+        for (let step = 0; step < steps; step += 1) {
+          const t = step / steps;
+          route.push({ x: cx + dx * t, z: cz + dz * t });
+        }
+      }
+      // Only keep blocks whose loop is long enough to be worth watching a car go
+      // round; a tiny loop reads as a bug.
+      if (route.length > 12) routes.push(route);
+    }
+  }
+
+  return routes;
+}
+
+/** Position and heading along a closed route, wrapped at both ends. */
+export function routePosition(
+  route: RouteWaypoint[],
+  t: number,
+  speed: number,
+  progress: number,
+): { x: number; z: number; angle: number } {
+  if (route.length < 2) return { x: 0, z: 0, angle: 0 };
+
+  // Arc length, so speed is constant through corners instead of proportional to
+  // the number of sampled points.
+  const lengths: number[] = [];
+  let total = 0;
+  for (let index = 0; index < route.length; index += 1) {
+    const a = route[index];
+    const b = route[(index + 1) % route.length];
+    const step = Math.hypot(b.x - a.x, b.z - a.z);
+    lengths.push(step);
+    total += step;
+  }
+  if (total <= 0) return { x: route[0].x, z: route[0].z, angle: 0 };
+
+  const travelled = (((progress * total + t * speed) % total) + total) % total;
+
+  let walked = 0;
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (walked + lengths[index] >= travelled) {
+      const t0 = (travelled - walked) / (lengths[index] || 1);
+      const a = route[index];
+      const b = route[(index + 1) % route.length];
+      const x = a.x + (b.x - a.x) * t0;
+      const z = a.z + (b.z - a.z) * t0;
+      // Heading from the segment direction, using the same convention as
+      // `vehiclePosition`: forward is (cos angle, -sin angle) in world space.
+      const angle = Math.atan2(-(b.z - a.z), b.x - a.x);
+      return { x, z, angle };
+    }
+    walked += lengths[index];
+  }
+
+  const last = route[route.length - 1];
+  return { x: last.x, z: last.z, angle: 0 };
 }
 
 /* ----------------------------------------------------------- status model */
@@ -913,6 +1035,8 @@ export interface CityModel {
   lanes: TrafficLane[];
   zones: ZoneHull[];
   scenery: ScatterProp[];
+  /** Loops around blocks: traffic that turns at intersections. */
+  routes: RouteWaypoint[][];
   /** Kerbs beside every avenue: what makes a road read as a street. */
   pavements: Pavement[];
   /** Parking aprons where a block has room for one. */
@@ -937,6 +1061,7 @@ export function buildCityModel(graph: TwinGraph | null): CityModel | null {
     lanes: buildTrafficLanes(grid),
     zones: buildZoneHulls(graph.zones),
     scenery: buildScenery(assets, grid),
+    routes: buildRoutes(grid),
     pavements: buildPavements(grid),
     parking: buildParking(assets, grid),
   };
