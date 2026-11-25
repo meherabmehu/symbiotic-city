@@ -637,3 +637,82 @@ export interface Timeline {
   sources: Record<string, number>;
   notes: string[];
 }
+
+/* ------------------------------------------------------------- criticality */
+
+export interface CriticalityRow {
+  asset_id: number;
+  code: string;
+  name: string;
+  category: string;
+  status: string;
+  criticality: number;
+  zone: { id: number; code: string; name: string } | null;
+  map_x: number;
+  map_y: number;
+  criticality_index: number;
+  components: { reach: number; blast: number; population: number; single_point: number };
+  dependants_direct: number;
+  reach_score: number;
+  reach_all: number;
+  single_point_dependants: number;
+  consequence: {
+    assets_failed: number;
+    assets_degraded: number;
+    assets_affected: number;
+    population_affected: number;
+    max_depth_reached: number;
+    critical_services_lost: string[];
+    critical_services_lost_count: number;
+    snapshot_hash: string;
+    explanation: string;
+  };
+}
+
+export interface CriticalityIndex {
+  generated_at: string;
+  model: { weights: Record<string, number>; assumptions: string[] };
+  fleet: { assets_scored: number; mean_index: number; max_index: number; min_index: number };
+  ranking: CriticalityRow[];
+}
+
+/* -------------------------------------------------------------- investment */
+
+export interface InvestmentOption {
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  category: string;
+  zone_id: number | null;
+  intervention: string;
+  mechanism: string;
+  annual_cost: number;
+  benefit: {
+    population_protected: number;
+    assets_saved: number;
+    critical_services_protected: string[];
+    resilience_score: number;
+  };
+  changes_anything: boolean;
+}
+
+export interface InvestmentPlan {
+  baseline: {
+    trigger_codes: string[];
+    assets_failed: number;
+    population_at_risk: number;
+    critical_services_lost: string[];
+  };
+  objective?: Record<string, number>;
+  options: InvestmentOption[];
+  interventions_considered?: number;
+  assets_considered?: number;
+  method: {
+    weighting?: Record<string, number>;
+    cost_basis?: Record<string, string>;
+    costs_are?: string;
+    assumptions?: string[];
+  };
+  assumptions: string[];
+  notes: string[];
+}

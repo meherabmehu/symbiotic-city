@@ -325,3 +325,75 @@ describe("city scene", () => {
     ).toBeNull();
   });
 });
+
+describe("analytical lenses", () => {
+  it("draws an intensity column only when a lens supplies one", async () => {
+    const asset = MODEL.assets[0];
+
+    const plain = await ReactThreeTestRenderer.create(
+      <Building
+        category={asset.node.category}
+        status="operational"
+        footprint={asset.footprint}
+        position={asset.position}
+        rotation={0}
+        selected={false}
+      />,
+    );
+    const plainMeshes = countType(plain.scene, "Mesh");
+    await plain.unmount();
+
+    const lensed = await ReactThreeTestRenderer.create(
+      <Building
+        category={asset.node.category}
+        status="operational"
+        footprint={asset.footprint}
+        position={asset.position}
+        rotation={0}
+        selected={false}
+        intensity={{ value: 84, emphasis: true }}
+      />,
+    );
+    const lensedMeshes = countType(lensed.scene, "Mesh");
+    await lensed.unmount();
+
+    // A column and a cap: two extra meshes, and no change to the building's own
+    // colour, which still means status.
+    expect(lensedMeshes).toBe(plainMeshes + 2);
+  });
+
+  it("keeps the lens separate from the status mark", async () => {
+    const asset = MODEL.assets[0];
+    const renderer = await ReactThreeTestRenderer.create(
+      <Building
+        category={asset.node.category}
+        status="failed"
+        footprint={asset.footprint}
+        position={asset.position}
+        rotation={0}
+        selected={false}
+        intensity={{ value: 100 }}
+      />,
+    );
+
+    // Both the failure cross (2 meshes) and the lens (2 meshes) are present: a
+    // reading on an asset does not replace what state it is in.
+    const withBoth = countType(renderer.scene, "Mesh");
+    await renderer.unmount();
+
+    const failedOnly = await ReactThreeTestRenderer.create(
+      <Building
+        category={asset.node.category}
+        status="failed"
+        footprint={asset.footprint}
+        position={asset.position}
+        rotation={0}
+        selected={false}
+      />,
+    );
+    const withoutLens = countType(failedOnly.scene, "Mesh");
+    await failedOnly.unmount();
+
+    expect(withBoth).toBe(withoutLens + 2);
+  });
+});

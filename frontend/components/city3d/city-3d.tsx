@@ -45,6 +45,15 @@ export interface City3DOverlay {
   recovering?: number[];
   /** Zone resilience scores, for the heatmap overlay. */
   heat?: Map<string, { score: number; band: string }>;
+  /**
+   * Per-asset intensity, 0-100, for an analytical lens over the buildings.
+   *
+   * Used by the criticality ranking and by the investment planner's per-asset
+   * benefit. One map rather than a mode enum: the canvas only needs to know how
+   * strongly to light a building, and the caller decides what the number means.
+   * The legend that gives it meaning lives in the panel that produced it.
+   */
+  intensity?: Map<number, { value: number; emphasis?: boolean }>;
 }
 
 export interface City3DProps {
@@ -118,6 +127,8 @@ export function City3D(props: City3DProps) {
   const recovering = useMemo(() => new Set(overlay?.recovering ?? []), [overlay?.recovering]);
 
   /** Status per asset, resolved once per render pass. */
+  const intensity = overlay?.intensity;
+
   const statusById = useMemo(() => {
     const map = new Map<number, VisualStatus>();
     for (const asset of model?.assets ?? []) {
@@ -254,6 +265,7 @@ export function City3D(props: City3DProps) {
               // does, and on a low preset it buys nothing at the camera distances
               // the preset is meant for.
               castShadow={shadows}
+              intensity={intensity?.get(asset.node.id)}
             />
           ))}
 
