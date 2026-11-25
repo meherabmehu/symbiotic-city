@@ -6,19 +6,29 @@
  */
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
   ArrowUpRight,
   Cpu,
+  Flame,
+  History,
   Layers,
   Network,
   Play,
   Share2,
+  ShieldAlert,
 } from "lucide-react";
-import { CityTwin, ZoneSummary } from "@/components/city-twin";
+import { ZoneSummary } from "@/components/city-twin";
+import { TwinView } from "@/components/city3d/twin-view";
+import { HeatmapPanel } from "@/components/city3d/heatmap-panel";
+import { ReplayPanel } from "@/components/city3d/replay-panel";
+import { TimelinePanel, presentFrame, timelineOverlay } from "@/components/city3d/timeline-panel";
+import { LensPanel, type LensMode } from "@/components/city3d/lens-panel";
+import { frameAt, statusSteps } from "@/lib/timeline";
+import type { City3DOverlay } from "@/components/city3d/city-3d";
 import {
   Alert,
   Badge,
@@ -34,7 +44,17 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatNumber, percent } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
-import type { TwinGraph, TwinNode } from "@/lib/types";
+import type {
+  CriticalityIndex,
+  Heatmap,
+  InvestmentPlan,
+  Timeline,
+  ListResponse,
+  SimulationRun,
+  SimulationRunDetail,
+  TwinGraph,
+  TwinNode,
+} from "@/lib/types";
 
 const LEGEND_FILTERS = [
   { value: "all", label: "All statuses" },
@@ -50,7 +70,106 @@ export default function TwinPage() {
   const [selected, setSelected] = useState<TwinNode | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [showEdges, setShowEdges] = useState(true);
+  const [showZones, setShowZones] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [heatOn, setHeatOn] = useState(false);
+  const [heatZone, setHeatZone] = useState<string | null>(null);
+  const [lens, setLens] = useState<LensMode>("off");
+  const [replayRunId, setReplayRunId] = useState<number | null>(null);
+  const [replayLevels, setReplayLevels] = useState<Map<number, "failed" | "degraded" | "affected">>(new Map());
+  const [timelineIndex, setTimelineIndex] = useState<number | null>(null);
   const { data, loading, error, reload } = useAsync<TwinGraph>(() => api.get("/twin/graph"), []);
+
+  // Overlay data is fetched separately from the twin itself: if either analytical
+  // layer fails, the city still draws and the failure is reported where it
+  // belongs instead of blanking the screen.
+  const heatmap = useAsync<Heatmap>(() => api.get("/resilience/heatmap"), []);
+  const runs = useAsync<SimulationRun[]>(async () => {
+    const response: ListResponse<SimulationRun> = await api.list("/simulations?page_size=20");
+    return response.data;
+  }, []);
+  const criticality = useAsync<CriticalityIndex>(() => api.get("/resilience/criticality"), []);
+  const investment = useAsync<InvestmentPlan>(() => api.get("/resilience/investment"), []);
+  const timeline = useAsync<Timeline>(() => api.get("/resilience/timetravel"), []);
+  const replayDetail = useAsync<SimulationRunDetail>(
+    () => (replayRunId ? api.get(`/simulations/${replayRunId}`) : Promise.resolve(null as unknown as SimulationRunDetail)),
+    [replayRunId],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReducedMotion(query.matches);
+    const handler = (event: MediaQueryListEvent) => setReducedMotion(event.matches);
+    query.addEventListener("change", handler);
+    return () => query.removeEventListener("change", handler);
+  }, []);
+
+  const overlay = useMemo<City3DOverlay>(() => {
+    const result: City3DOverlay = {};
+    if (replayLevels.size > 0) {
+      result.impacts = [...replayLevels].map(([assetId, level]) => ({
+        asset_id: assetId,
+        impact_level: level,
+      })) as City3DOverlay["impacts"];
+    }
+    if (heatOn && heatmap.data) {
+      result.heat = new Map(
+        heatmap.data.zones.map((zone) => [zone.code, { score: zone.risk_score, band: zone.risk_band }]),
+      );
+    }
+    // The analytical lens: one number per asset, from whichever ranking is on.
+    if (lens === "criticality" && criticality.data) {
+      result.intensity = new Map(
+        criticality.data.ranking.map((row) => [
+          row.asset_id,
+          { value: row.criticality_index, emphasis: row.criticality_index >= 70 },
+        ]),
+      );
+    } else if (lens === "investment" && investment.data) {
+      const max = investment.data.options.reduce(
+        (best, option) => Math.max(best, option.benefit.population_protected),
+        1,
+      );
+      const byAsset = new Map<number, { value: number; emphasis?: boolean }>();
+      for (const option of investment.data.options) {
+        if (!option.changes_anything) continue;
+        // Several interventions can target one asset; the strongest reading wins,
+        // because that is the one worth acting on.
+        const value = (option.benefit.population_protected / max) * 100;
+        const existing = byAsset.get(option.asset_id);
+        if (!existing || value > existing.value) {
+          byAsset.set(option.asset_id, { value, emphasis: value >= 70 });
+        }
+      }
+      result.intensity = byAsset;
+    }
+
+    // Timeline overrides are additive: they describe the past, so they coexist
+    // with a replay or a heat layer rather than replacing it.
+    if (timeline.data && timelineIndex !== null) {
+      const frame = frameAt(timeline.data, data?.nodes ?? [], timelineIndex);
+      const overrides = timelineOverlay(frame, data?.nodes ?? []);
+      result.impacts = [...(result.impacts ?? []), ...(overrides as NonNullable<City3DOverlay["impacts"]>)];
+      result.recovering = [...frame.maintenance];
+    }
+    return result;
+  }, [replayLevels, heatOn, heatmap.data, timeline.data, timelineIndex, data, lens, criticality.data, investment.data]);
+
+  // Stable identity: the replay panel pushes a frame per animation tick, and a new
+  // callback each render would re-run its effect on every frame.
+  const handleReplayFrame = useCallback(
+    (levels: Map<number, "failed" | "degraded" | "affected">) => setReplayLevels(levels),
+    [],
+  );
+
+  const timelineFrame = useMemo(
+    () =>
+      timelineIndex === null
+        ? presentFrame(timeline.data, data?.nodes ?? [])
+        : frameAt(timeline.data, data?.nodes ?? [], timelineIndex),
+    [timelineIndex, timeline.data, data],
+  );
 
   const graph = useMemo(() => {
     if (!data) return null;
@@ -70,7 +189,7 @@ export default function TwinPage() {
       <PageHeader
         eyebrow="Digital twin"
         title="Interactive city"
-        description="A live model of Aurora Vale: five zones, every registered asset and every modelled dependency. Select an asset to inspect its dependencies, then launch a simulation from the failure lab."
+        description="A living 3D model of Aurora Vale: five zones, every registered asset and every modelled dependency, with traffic on the avenues. Rotate, zoom and select a building to inspect what it depends on, then launch a simulation from the failure lab."
         actions={
           <>
             <Button variant="secondary" onClick={reload}>
@@ -127,16 +246,28 @@ export default function TwinPage() {
                 >
                   <Network className="h-3.5 w-3.5" aria-hidden /> {showEdges ? "Dependencies on" : "Dependencies off"}
                 </Button>
+                <Button
+                  variant={showZones ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setShowZones((v) => !v)}
+                  aria-pressed={showZones}
+                >
+                  <Layers className="h-3.5 w-3.5" aria-hidden /> {showZones ? "Zones on" : "Zones off"}
+                </Button>
               </div>
-              <p className="text-[11px] text-ink-500">Synthetic layout · normalised 0–100 grid coordinates</p>
+              <p className="text-[11px] text-ink-500">Synthetic layout · assets placed from the twin graph, roads routed around their plots</p>
             </div>
-            <CityTwin
+            <TwinView
               graph={graph}
               loading={loading}
+              error={error}
+              overlay={overlay}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
               showEdges={showEdges}
-              height={520}
+              showZones={showZones}
+              selectedZone={heatZone}
+              height={560}
             />
           </Panel>
 
@@ -247,6 +378,82 @@ export default function TwinPage() {
                 incident is open.
               </p>
             )}
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Resilience lens"
+              subtitle="Criticality and investment, drawn on the city"
+              icon={<ShieldAlert className="h-4 w-4" />}
+            />
+            <LensPanel
+              criticality={criticality.data}
+              investment={investment.data}
+              loading={criticality.loading && investment.loading}
+              error={criticality.error ?? investment.error}
+              mode={lens}
+              onMode={setLens}
+              onSelectAsset={(id) => {
+                const node = data?.nodes.find((candidate) => candidate.id === id) ?? null;
+                setSelected(node);
+              }}
+            />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Exposure heatmap"
+              subtitle="Zone risk from the latest simulated run"
+              icon={<Flame className="h-4 w-4" />}
+            />
+            <HeatmapPanel
+              heatmap={heatmap.data}
+              loading={heatmap.loading}
+              error={heatmap.error}
+              enabled={heatOn}
+              onEnable={setHeatOn}
+              selectedZone={heatZone}
+              onSelectZone={setHeatZone}
+            />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Time travel"
+              subtitle="Rewind the twin through its recorded history"
+              icon={<History className="h-4 w-4" />}
+            />
+            <TimelinePanel
+              timeline={timeline.data}
+              nodes={data?.nodes ?? []}
+              loading={timeline.loading}
+              error={timeline.error}
+              frame={timelineFrame}
+              onScrub={setTimelineIndex}
+              onReset={() => setTimelineIndex(null)}
+              onSelectAsset={(id) => {
+                const node = data?.nodes.find((candidate) => candidate.id === id) ?? null;
+                setSelected(node);
+              }}
+            />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              title="Replay a cascade"
+              subtitle="Stored simulation results, played over the live map"
+              icon={<History className="h-4 w-4" />}
+            />
+            <ReplayPanel
+              runs={runs.data ?? []}
+              selectedRunId={replayRunId}
+              onSelectRun={setReplayRunId}
+              detail={replayDetail.data ?? null}
+              loading={runs.loading || replayDetail.loading}
+              error={runs.error ?? replayDetail.error}
+              reducedMotion={reducedMotion}
+              onFrame={handleReplayFrame}
+            />
           </Panel>
 
           <Panel>
