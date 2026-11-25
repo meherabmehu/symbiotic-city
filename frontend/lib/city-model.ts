@@ -776,27 +776,160 @@ export function incidentPose(position: Point3, footprint: Footprint): CameraPose
 }
 
 /**
+ * How much of the half-viewport the city may fill when fitting: 0.9 leaves a
+ * margin so the boundary roads are not shaved off by the frame edge.
+ */
+const FIT_TARGET = 0.9;
+
+/**
+ * Fill-framing allowances, each as a fraction of the half-viewport the axis may
+ * occupy (the combined extent must land at or below 1.0):
+ *  - FILL_WIDTH: sides may just touch/slightly cross the frame edges;
+ *  - FILL_FAR:   the far district must stay inside the top with a small margin;
+ *  - FILL_NEAR:  the near boundary road may hang well past the bottom edge --
+ *                that crop into the near triangle is what makes the shot read
+ *                as "inside the city" rather than "a model on a table".
+ */
+const FILL_WIDTH = 1.02;
+const FILL_FAR = 0.95;
+const FILL_NEAR = 2.8;
+
+/**
+ * How much of the half-viewport the city's bounding box covers when the camera
+ * sits `distance` away along the preset direction. The projection is done by
+ * hand (forward/right/up basis + perspective divide) so this module stays free
+ * of three.js and unit-testable in plain node.
+ */
+function fitExtent(
+  direction: [number, number, number],
+  distance: number,
+  aspect: number,
+  fov: number,
+  fill: boolean,
+): number {
+  const [dx, dy, dz] = direction;
+  const px = dx * distance;
+  const py = dy * distance;
+  const pz = dz * distance;
+  // Camera basis: n points from the target toward thecamera, so the view axis
+  // is -n; right = (up x n) normalised; up_cam = n x right. The top-down
+  // preset leans a thousandth of a unit, which is what keeps right defined
+  // there instead of collapsing against the world up vector.
+  const nl = Math.hypot(px, py, pz) || 1;
+  const nx = px / nl;
+  const ny = py / nl;
+  const nz = pz / nl;
+  const rl = Math.hypot(nz, 0, -nx) || 1;
+  const rx = nz / rl;
+  const rz = -nx / rl;
+  const ux = ny * rz;
+  const uy = nz * rx - nx * rz;
+  const uz = -ny * rx;
+
+  const tanV = Math.tan((fov * Math.PI) / 360);
+  const tanH = tanV * Math.max(aspect, 0.2);
+  const half = CITY_EXTENT * 1.06;
+
+  let extent = 0;
+  for (const y of [0, 17]) {
+    for (const x of [-half, half]) {
+      for (const z of [-half, half]) {
+        const vx = x - px;
+        const vy = y - py;
+        const vz = z - pz;
+        const depth = -(vx * nx + vy * ny + vz * nz);
+        if (depth <= 0.01) continue;
+        const sx = vx * rx + vz * rz;
+        const sy = vx * ux + vy * uy + vz * uz;
+        const ex = Math.abs(sx) / depth / tanH;
+        const ey = Math.abs(sy) / depth / tanV;
+        if (fill) {
+          // Fill framing (the opening shot): the composition the reference
+          // dashboard uses -- the city runs to both side edges, the far district
+          // stays inside the top of the frame, and the near boundary road is
+          // allowed to crop away at the bottom. Each axis gets its own allowance
+          // and the result is compared against 1.0, so the solver stops at the
+          // first distance where every axis is inside its own budget. Fitting
+          // the near corner *inside* the frame is what made whole-city fits pull
+          // so far back that a wide viewport left the city floating small in the
+          // middle with empty flanks.
+          if (depth >= distance) extent = Math.max(extent, ex / FILL_WIDTH, ey / FILL_FAR);
+          else extent = Math.max(extent, ex / FILL_WIDTH, ey / FILL_NEAR);
+        } else {
+          extent = Math.max(extent, ex, ey);
+        }
+      }
+    }
+  }
+  return extent;
+}
+
+/** Shared bisection: extent shrinks monotonically as the camera pulls back. */
+function solveFit(
+  mode: CameraMode,
+  aspect: number,
+  fov: number,
+  fill: boolean,
+): number {
+  const pose = cameraPose(mode);
+  const [bx, by, bz] = pose.position;
+  const length = Math.hypot(bx, by, bz) || 1;
+  const direction: [number, number, number] = [bx / length, by / length, bz / length];
+
+  const target = fill ? 1.0 : FIT_TARGET;
+  let lo = 8;
+  let hi = 2400;
+  for (let i = 0; i < 34; i++) {
+    const mid = (lo + hi) / 2;
+    if (fitExtent(direction, mid, aspect, fov, fill) > target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
  * The pose that fits the whole city, honouring the aspect ratio.
  *
- * A fixed distance works for a wide window and crops the model in a tall one. This
- * measures what is actually in front of the camera: the city is `CITY_EXTENT *
- * 2` across, so the distance needed is that half-width divided by the tangent of
- * the half field of view -- using the *narrower* of the vertical and horizontal
- * fields of view, which is the one that would crop first.
+ * An analytic distance derived from the field of view alone frames a ground
+ * plane badly in a perspective view: the plane is foreshortened, so a distance
+ * that "fits the width" on paper leaves the city floating small in the middle
+ * of the frame (at the default aspect it sat at roughly 280 units -- three
+ * times the preset distance). This solves against the city's actual projected
+ * bounding box instead -- bisect on the distance until the projected extent of
+ * the boundary and the tall-building roofline sits just inside the viewport.
+ * The preset's viewing direction is kept, so fit reads as "same angle, whole
+ * city in frame", and top-down stays directly overhead.
  */
 export function fitPose(mode: CameraMode, aspect: number, fovDegrees = 42): CameraPose {
-  const halfWidth = CITY_EXTENT * 1.08;
-  const vertical = (fovDegrees * Math.PI) / 180;
-  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * Math.max(aspect, 0.2));
-  const halfAngle = Math.min(vertical, horizontal) / 2;
-  const distance = halfWidth / Math.tan(halfAngle);
-
-  // Keep the preset's viewing direction and move along it, so fitting from the
-  // top-down preset does not quietly become an isometric view.
-  const [bx, by, bz] = cameraPose(mode).position;
+  const pose = cameraPose(mode);
+  const [bx, by, bz] = pose.position;
   const length = Math.hypot(bx, by, bz) || 1;
+  const direction: [number, number, number] = [bx / length, by / length, bz / length];
+  const fov = Math.min(90, Math.max(18, fovDegrees));
+  const distance = solveFit(mode, aspect, fov, false);
+
   return {
-    position: [(bx / length) * distance, (by / length) * distance, (bz / length) * distance],
+    position: [direction[0] * distance, direction[1] * distance, direction[2] * distance],
+    target: [0, 0, 0],
+  };
+}
+
+/**
+ * The opening frame: same solved fit, but composed to fill the viewport the way
+ * the reference dashboard does -- width edge to edge, far district inside the
+ * frame, the near boundary road allowed to crop at the bottom. `fitPose` stays
+ * the honest "show me the entire model" control; this is the shot you land on.
+ */
+export function fillPose(mode: CameraMode, aspect: number, fovDegrees = 42): CameraPose {
+  const pose = cameraPose(mode);
+  const [bx, by, bz] = pose.position;
+  const length = Math.hypot(bx, by, bz) || 1;
+  const direction: [number, number, number] = [bx / length, by / length, bz / length];
+  const fov = Math.min(90, Math.max(18, fovDegrees));
+  const distance = solveFit(mode, aspect, fov, true);
+
+  return {
+    position: [direction[0] * distance, direction[1] * distance, direction[2] * distance],
     target: [0, 0, 0],
   };
 }
