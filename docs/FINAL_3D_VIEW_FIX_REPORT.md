@@ -94,6 +94,11 @@ Two real contract bugs were found and fixed during this verification:
    `asset_id=1` returns `[]`, and PS-01's card now shows a consistent
    "0 open" with no stray incident chips.
 
+Both consumers of the corrected criticality type were checked directly after
+the fix: `/twin` shows the derived mean (16.6) with no console errors, and
+`/resilience` (analyst) renders its "assets scored" line with no page errors —
+the `.toFixed` crash path is gone.
+
 ## 4. Camera framing (fit + opening shot) — **verified**
 
 `fitPose` was rewritten to solve against the city's **projected bounding box**
