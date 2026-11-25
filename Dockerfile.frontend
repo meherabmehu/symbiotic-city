@@ -7,12 +7,19 @@
 #
 #  BACKEND_URL is read by next.config.mjs when rewrites are evaluated, i.e. at
 #  build time, so it is passed as a build argument as well as a runtime variable.
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
+# The image must ship npm 11. node:20-alpine bundles npm 10, which crashes resolving
+# vitest's optional browser-mode peers ("Cannot read properties of null (reading
+# 'edgesOut')") and aborts the install before writing anything. The project's
+# preinstall guard refuses to run under npm 10 for the same reason, so this image and
+# the guard have to agree. Pinned explicitly rather than relying on what a tag happens
+# to bundle, so a tag update cannot silently reintroduce npm 10.
+RUN npm install -g npm@11 && npm --version
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG BACKEND_URL=http://api:8000
@@ -21,7 +28,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
 RUN npm run build
 
-FROM node:20-alpine AS run
+FROM node:22-alpine AS run
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
