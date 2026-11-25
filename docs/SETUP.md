@@ -59,8 +59,15 @@ both cookies and CSRF, and is not supported.
 ### Reset the data
 
 ```bash
-FORCE=1 ./scripts/seed.sh     # drop the SQLite file and reseed
+FORCE=1 ./scripts/seed.sh     # bash
 ```
+
+```powershell
+.\scripts\seed.ps1 -Force     # Windows / PowerShell
+```
+
+Both ask the app where the database is (so a custom `DATABASE_URL` is honoured)
+rather than assuming a path, and both use the same deterministic seeder.
 
 The seeder is deterministic (`random.Random(20260101)`): the same catalogue, the
 same historical incidents, the same ids on every reset.
