@@ -77,6 +77,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      # The 3D twin's layout, status and replay maths, and the scene-graph tests
+      # that build the real React Three Fiber tree without a GPU. These run here,
+      # before the build, so a broken city model fails fast and cheap.
+      - run: npm test
       - run: npm run build
 
   e2e:
