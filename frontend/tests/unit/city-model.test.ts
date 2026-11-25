@@ -9,14 +9,19 @@ import {
   buildTrafficLanes,
   buildZoneHulls,
   cameraPose,
+  cascadeDepths,
   clampTarget,
+  fitPose,
   focusPose,
+  incidentPose,
   placeAssets,
   resolveVisualStatus,
   toScene,
+  routePosition,
   vehiclePosition,
   visualStatusFor,
 } from "@/lib/city-model";
+import type { CameraPose } from "@/lib/city-model";
 import type { TwinEdge, TwinGraph, TwinNode, Zone } from "@/lib/types";
 
 /* --------------------------------------------------------------- fixtures */
@@ -226,6 +231,78 @@ describe("traffic lanes", () => {
   });
 });
 
+/**
+ * A vehicle's local +x is forward, so its world heading is (cos angle, -sin angle).
+ * Two lanes had this sign inverted, which drove northbound traffic backwards down
+ * the street. Nothing noticed, because a box viewed from above looks the same
+ * either way -- until you look at it from street level.
+ */
+function headingOf(angle: number) {
+  return { x: Math.cos(angle), z: -Math.sin(angle) };
+}
+
+describe("traffic heading and turns", () => {
+  it("faces every vehicle in the direction it is travelling", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    for (const lane of model.lanes) {
+      const here = vehiclePosition(lane, 0, 9, 0.3);
+      const next = vehiclePosition(lane, 0.5, 9, 0.3);
+      const travel = { x: Math.sign(next.x - here.x), z: Math.sign(next.z - here.z) };
+      const heading = headingOf(here.angle);
+      const dot = heading.x * travel.x + heading.z * travel.z;
+      expect(dot, `lane ${lane.id} faces away from its travel direction`).toBeGreaterThan(0.9);
+    }
+  });
+
+  it("turns at intersections instead of driving straight forever", () => {
+    // Straight lanes alone are a conveyor belt: no vehicle ever turns, so nothing
+    // reads as a street network. Routes are loops around blocks, with corners
+    // sampled as arcs.
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    expect(model.routes.length).toBeGreaterThan(0);
+
+    for (const route of model.routes) {
+      expect(route.length).toBeGreaterThan(12);
+      // A loop must visit both axes, otherwise it is a straight line with a
+      // doubling-back artefact at the end.
+      expect(new Set(route.map((point) => Math.round(point.x))).size).toBeGreaterThan(1);
+      expect(new Set(route.map((point) => Math.round(point.z))).size).toBeGreaterThan(1);
+    }
+  });
+
+  it("keeps a turning vehicle at the same speed through corners", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    const route = model.routes[0];
+
+    // Sample at equal time steps. Distance per step must stay roughly constant: if
+    // corners were walked by point index rather than by arc length, a vehicle
+    // would sprint through the turns.
+    const steps = 80;
+    const samples = Array.from({ length: steps }, (_, index) =>
+      routePosition(route, index * 0.1, 12, 0),
+    );
+    const hops = samples
+      .slice(1)
+      .map((point, index) => Math.hypot(point.x - samples[index].x, point.z - samples[index].z));
+    const mean = hops.reduce((sum, hop) => sum + hop, 0) / hops.length;
+    for (const hop of hops) {
+      expect(hop).toBeGreaterThan(mean * 0.6);
+      expect(hop).toBeLessThan(mean * 1.6);
+    }
+  });
+
+  it("follows the loop's direction of travel rather than sliding sideways", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    const route = model.routes[0];
+    const here = routePosition(route, 0, 10, 0.2);
+    const next = routePosition(route, 0.2, 10, 0.2);
+    const heading = headingOf(here.angle);
+    const travel = { x: Math.sign(next.x - here.x), z: Math.sign(next.z - here.z) };
+    const dot = heading.x * travel.x + heading.z * travel.z;
+    expect(dot).toBeGreaterThan(0.5);
+  });
+});
+
 describe("vehicle motion", () => {
   const lanes = buildTrafficLanes(buildRoadGrid(placeAssets(SEED_NODES)));
   const lane = lanes[0];
@@ -403,6 +480,99 @@ describe("camera", () => {
 
 /* ------------------------------------------------------------------- model */
 
+describe("cascade depth", () => {
+  const edges = [
+    { source: 1, target: 2 },
+    { source: 1, target: 3 },
+    { source: 2, target: 4 },
+    { source: 4, target: 5 },
+    // A separate branch, unrelated to the origin.
+    { source: 7, target: 8 },
+  ];
+
+  it("measures hops out from the origin", () => {
+    const depths = cascadeDepths(edges, [2, 3, 4, 5], 1);
+    expect(depths.get(1)).toBe(0);
+    expect(depths.get(2)).toBe(1);
+    expect(depths.get(3)).toBe(1);
+    expect(depths.get(4)).toBe(2);
+    // Longest path, not shortest: 5 is reached through 2 then 4, so it is three
+    // hops out even though a shorter chain to it does not exist.
+    expect(depths.get(5)).toBe(3);
+  });
+
+  it("leaves out assets a path reaches but the run did not touch", () => {
+    // A dependency path is not a prediction. If the engine stopped before
+    // cascading to 5, drawing it as part of the cascade would overstate the result.
+    const depths = cascadeDepths(edges, [2, 4], 1);
+    expect(depths.has(5)).toBe(false);
+    expect(depths.has(8)).toBe(false);
+  });
+
+  it("returns nothing without an origin", () => {
+    expect(cascadeDepths(edges, [2], null).size).toBe(0);
+  });
+
+  it("does not loop on a cycle in the dependency graph", () => {
+    const cyclic = [
+      { source: 1, target: 2 },
+      { source: 2, target: 3 },
+      { source: 3, target: 1 },
+    ];
+    const depths = cascadeDepths(cyclic, [2, 3], 1);
+    expect(depths.get(3)).toBe(2);
+    expect(depths.size).toBe(3);
+  });
+});
+
+describe("camera framing", () => {
+  it("frames the whole city in a narrow viewport by pulling back further", () => {
+    // A fixed distance crops the model in a tall window. The fit has to use the
+    // narrower of the two fields of view, which is the one that would crop first.
+    const wide = fitPose("perspective", 2.2);
+    const tall = fitPose("perspective", 0.6);
+
+    const reach = (pose: CameraPose) => Math.hypot(...pose.position);
+    expect(reach(tall)).toBeGreaterThan(reach(wide));
+  });
+
+  it("keeps the preset's viewing direction when fitting", () => {
+    const top = fitPose("top", 1.6);
+    // Top-down means looking straight down: x and z must stay near zero relative to
+    // the height, or "fit" would quietly turn into an isometric view.
+    const height = Math.hypot(...top.position);
+    expect(Math.abs(top.position[1])).toBeCloseTo(height, 5);
+    // The preset itself leans by a thousandth of a unit so the up vector never
+    // becomes degenerate; the fit preserves that lean rather than removing it.
+    expect(Math.hypot(top.position[0], top.position[2]) / height).toBeLessThan(0.01);
+  });
+
+  it("clears the whole city at every aspect ratio", () => {
+    for (const aspect of [0.5, 0.9, 1.6, 2.4]) {
+      const pose = fitPose("isometric", aspect);
+      const reach = Math.hypot(...pose.position);
+      // The city's half-diagonal is ~CITY_EXTENT * 1.41; a fit distance shorter
+      // than that would put the camera inside the model.
+      expect(reach, `aspect ${aspect} is too close`).toBeGreaterThan(CITY_EXTENT * 1.2);
+    }
+  });
+
+  it("frames an incident further out than the asset it started at", () => {
+    // An incident is about what it reaches, not just the building: the camera has
+    // to include the streets the consequence runs along.
+    const asset = { position: { x: 10, y: 0, z: -20 }, footprint: { width: 6, depth: 6, height: 9, plot: 12 } };
+    const assetPose = focusPose(asset.position, asset.footprint);
+    const incident = incidentPose(asset.position, asset.footprint);
+
+    const reach = (pose: CameraPose) =>
+      Math.hypot(pose.position[0] - pose.target[0], pose.position[1] - pose.target[1], pose.position[2] - pose.target[2]);
+    expect(reach(incident)).toBeGreaterThan(reach(assetPose));
+    // And it must still be looking at the incident.
+    expect(incident.target[0]).toBeCloseTo(10, 5);
+    expect(incident.target[2]).toBeCloseTo(-20, 5);
+  });
+});
+
 describe("city model", () => {
   it("returns null for a missing graph instead of an empty scene", () => {
     expect(buildCityModel(null)).toBeNull();
@@ -443,6 +613,53 @@ describe("city model", () => {
         expect(inside).toBe(false);
       }
     }
+  });
+
+  it("keeps scenery off every carriageway, not just its own", () => {
+    // A tree in the middle of a road is the clearest sign that a city is
+    // decoration rather than a place. Checking against the nearest avenue only is
+    // not enough: a perpendicular street can run through a kerbside slot.
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    for (const prop of model.scenery) {
+      for (const segment of model.grid.segments) {
+        const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+        const across = horizontal
+          ? Math.abs(prop.position.z - segment.z1)
+          : Math.abs(prop.position.x - segment.x1);
+        const within = horizontal
+          ? prop.position.x >= Math.min(segment.x1, segment.x2) &&
+            prop.position.x <= Math.max(segment.x1, segment.x2)
+          : prop.position.z >= Math.min(segment.z1, segment.z2) &&
+            prop.position.z <= Math.max(segment.z1, segment.z2);
+        if (within) expect(across).toBeGreaterThan(segment.width / 2);
+      }
+    }
+  });
+
+  it("puts street furniture along the streets rather than scattered at random", () => {
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    const trees = model.scenery.filter((prop) => prop.kind === "tree");
+    expect(trees.length).toBeGreaterThan(20);
+
+    // Most trees should be nearer a road than the middle of a block: the kerbs are
+    // where they are placed, and a uniform scatter would not clear this.
+    const nearRoad = trees.filter((prop) =>
+      model.grid.segments.some((segment) => {
+        const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+        const across = horizontal
+          ? Math.abs(prop.position.z - segment.z1)
+          : Math.abs(prop.position.x - segment.x1);
+        return across < 9;
+      }),
+    );
+    expect(nearRoad.length / trees.length).toBeGreaterThan(0.5);
+  });
+
+  it("draws no parked cars, because a car in a field is not scenery", () => {
+    // Moving traffic is its own instanced mesh and carries no asset data. A static
+    // "car" prop scattered at random would read as abandoned vehicles.
+    const model = buildCityModel(graphOf(SEED_NODES))!;
+    expect(model.scenery.some((prop) => (prop.kind as string) === "car")).toBe(false);
   });
 
   it("builds the same city twice from the same data", () => {

@@ -284,6 +284,16 @@ export function Building({
       ) : null}
 
       <group scale={[1, scaleY, 1]}>
+        {/* Entrance: a canopy over a recessed door on the side that faces the
+            street. It is what turns a box into a building at street level, and
+            it is the same geometry for every category. */}
+        <mesh position={[0, 1.5, footprint.depth / 2 + 0.02]} material={set.trim} castShadow={castShadow}>
+          <boxGeometry args={[2.4, 0.22, 1.1]} />
+        </mesh>
+        <mesh position={[0, 0.85, footprint.depth / 2 - 0.03]} material={set.glass}>
+          <boxGeometry args={[1.7, 1.7, 0.12]} />
+        </mesh>
+
         {parts.map((part, index) => (
           <mesh
             key={index}
@@ -302,6 +312,18 @@ export function Building({
             )}
           </mesh>
         ))}
+      </group>
+
+      {/* Roof detail: a plant box and a pair of vents on the flat roof every
+          category has. Cheap, and it stops the roofline reading as a cut-off
+          extruded shape from above. */}
+      <group scale={[1, 1, 1]}>
+        <mesh position={[footprint.width * 0.22, footprint.height + 0.3, -footprint.depth * 0.18]} material={set.trim} castShadow={castShadow}>
+          <boxGeometry args={[1.4, 0.6, 1.1]} />
+        </mesh>
+        <mesh position={[-footprint.width * 0.26, footprint.height + 0.22, footprint.depth * 0.2]} material={set.trim}>
+          <cylinderGeometry args={[0.24, 0.24, 0.45, 8]} />
+        </mesh>
       </group>
 
       <StatusBeacon status={status} height={footprint.height} set={set} />

@@ -11,9 +11,16 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { Box, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
-import { City3D, hasWebGL, type City3DOverlay, type Quality } from "@/components/city3d/city-3d";
+import { Box, Frame, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
+import {
+  City3D,
+  SCENARIO_LABELS,
+  hasWebGL,
+  type City3DOverlay,
+  type Quality,
+} from "@/components/city3d/city-3d";
 import { CAMERA_MODES, STATUS_STYLES, type CameraMode } from "@/lib/city-model";
+import type { SceneStats } from "@/components/city3d/scene-stats";
 import type { TwinGraph, TwinNode } from "@/lib/types";
 import { Button, Select } from "@/components/ui";
 
@@ -26,7 +33,7 @@ const QUALITY_LABELS: Record<Quality, string> = {
 const CAMERA_ICON: Record<CameraMode, React.ComponentType<{ className?: string }>> = {
   perspective: Box,
   isometric: Layers,
-  top: RotateCcw,
+  top: Frame,
 };
 
 export interface TwinViewProps {
@@ -40,6 +47,8 @@ export interface TwinViewProps {
   showZones?: boolean;
   selectedZone?: string | null;
   height?: number;
+  /** Active incidents, which decide whether emergency vehicles are drawn. */
+  activeIncidents?: number;
 }
 
 export function TwinView({
@@ -53,11 +62,15 @@ export function TwinView({
   showZones = true,
   selectedZone = null,
   height = 560,
+  activeIncidents = 0,
 }: TwinViewProps) {
   const [quality, setQuality] = useState<Quality>("balanced");
   const [mode, setMode] = useState<CameraMode>("perspective");
   const [focusId, setFocusId] = useState<number | null>(null);
   const [showTraffic, setShowTraffic] = useState(true);
+  // A counter, not a boolean: pressing "Fit city" twice should fit twice.
+  const [fitRequest, setFitRequest] = useState(0);
+  const [stats, setStats] = useState<SceneStats | null>(null);
   const [showScenery, setShowScenery] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [listOpen, setListOpen] = useState(false);
@@ -134,6 +147,15 @@ export function TwinView({
         </Button>
 
         <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setFitRequest((value) => value + 1)}
+          title="Frame the whole city in the panel, whatever its size"
+        >
+          <Frame className="h-3.5 w-3.5" aria-hidden /> Fit city
+        </Button>
+
+        <Button
           variant={showTraffic ? "secondary" : "ghost"}
           size="sm"
           onClick={() => setShowTraffic((v) => !v)}
@@ -170,6 +192,38 @@ export function TwinView({
         </Button>
       </div>
 
+      {stats ? (
+        <details data-testid="city3d-stats" className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+          <summary className="cursor-pointer text-[11px] text-ink-400">
+            Scene cost · {stats.drawCalls} draw calls · {stats.fps} fps
+          </summary>
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] sm:grid-cols-4">
+            {[
+              ["Draw calls", String(stats.drawCalls)],
+              ["Triangles", stats.triangles.toLocaleString("en-US")],
+              ["Meshes", String(stats.meshes)],
+              ["Instanced meshes", `${stats.instancedMeshes} (${stats.instances} instances)`],
+              ["Materials", String(stats.materials)],
+              ["Geometries", String(stats.geometries)],
+              ["Textures", String(stats.textures)],
+              ["Shaders", String(stats.programs)],
+              ["JS heap", stats.heapMb == null ? "not exposed" : `${stats.heapMb} MB`],
+              ["Frame rate", `${stats.fps} fps`],
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-2">
+                <dt className="text-ink-600">{label}</dt>
+                <dd className="font-mono text-ink-300">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-[9px] leading-snug text-ink-600">
+            Read from three.js&apos;s own renderer counters after the last drawn frame, in this
+            browser. Frame rate is the only number that depends on your machine; the rest describe the
+            scene. Heap is shown only where the browser exposes it.
+          </p>
+        </details>
+      ) : null}
+
       {error ? (
         <p className="rounded-lg border border-coral/30 bg-coral/10 px-3 py-2 text-xs text-coral" role="alert">
           {error}
@@ -188,11 +242,40 @@ export function TwinView({
           selectedZone={selectedZone}
           showTraffic={showTraffic}
           showScenery={showScenery}
+          activeIncidents={activeIncidents}
+          fitRequest={fitRequest}
+          onStats={setStats}
           quality={quality}
           mode={mode}
+          onModeChange={setMode}
           focusId={focusId}
           height={expanded ? Math.max(height, 720) : height}
         />
+
+        {/* What kind of thing the overlay is, stated in words.
+            A hypothetical cascade and a recorded one are the same geometry; only
+            this badge distinguishes them, and confusing the two is the worst
+            mistake this view can make. Top-right so it never collides with the
+            status legend. */}
+        {overlay?.scenario && overlay.scenario !== "live" ? (
+          <div
+            data-testid="city3d-scenario-badge"
+            className={`pointer-events-none absolute right-3 top-3 rounded-xl border px-3 py-2 backdrop-blur ${
+              overlay.scenario === "hypothetical"
+                ? "border-amber/40 bg-amber/10"
+                : overlay.scenario === "historical"
+                  ? "border-white/15 bg-navy-950/85"
+                  : "border-accent/40 bg-accent/10"
+            }`}
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-300">
+              {SCENARIO_LABELS[overlay.scenario].heading}
+            </p>
+            <p className="mt-0.5 max-w-[190px] text-[9px] leading-snug text-ink-400">
+              {SCENARIO_LABELS[overlay.scenario].detail}
+            </p>
+          </div>
+        ) : null}
 
         {/* The legend is DOM, not in-canvas: text stays crisp, it is selectable,
             and it is read by assistive technology without a canvas hook. */}
