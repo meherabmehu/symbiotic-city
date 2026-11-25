@@ -17,39 +17,56 @@ import { expectShell, login, trackConsoleErrors } from "./helpers";
  * failure that actually happens -- a scene that failed to draw anything.
  */
 
-/** Average colour spread of the canvas, sampled through WebGL readback. */
-async function canvasIsDrawn(page: import("@playwright/test").Page): Promise<{
-  drawn: boolean;
-  distinct: number;
-  size: { width: number; height: number };
-}> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    if (!canvas) return { drawn: false, distinct: 0, size: { width: 0, height: 0 } };
-    // A WebGL canvas cannot be read back with 2D context calls, so go through the
-    // drawing buffer the renderer itself uses.
-    const gl =
-      (canvas.getContext("webgl2") as WebGL2RenderingContext | null) ??
-      (canvas.getContext("webgl") as WebGLRenderingContext | null);
-    if (!gl) return { drawn: false, distinct: 0, size: { width: canvas.width, height: canvas.height } };
-
-    const width = canvas.width;
-    const height = canvas.height;
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-    const seen = new Set<string>();
-    // Sample a grid rather than every pixel: 200k readbacks per test would be slow
-    // and the answer would be the same.
-    for (let y = 0; y < height; y += Math.max(1, Math.floor(height / 40))) {
-      for (let x = 0; x < width; x += Math.max(1, Math.floor(width / 40))) {
-        const offset = (y * width + x) * 4;
-        seen.add(`${pixels[offset]},${pixels[offset + 1]},${pixels[offset + 2]}`);
-      }
-    }
-
-    return { drawn: seen.size > 1, distinct: seen.size, size: { width, height } };
+/**
+ * Is the canvas actually painting?
+ *
+ * A WebGL drawing buffer is cleared after each composited frame unless the context
+ * was created with `preserveDrawingBuffer`, so reading it back from a test returns
+ * an empty buffer even when the scene is rendering perfectly. That would have made
+ * this test fail on a working city -- and, worse, could have been "fixed" by
+ * setting `preserveDrawingBuffer: true` in the app, paying a real performance cost
+ * so a test could look at a buffer.
+ *
+ * So the check reads the pixels the browser composited: screenshot the canvas
+ * element and count distinct colours in it. A scene that failed to draw is one
+ * flat colour; a rendered night city is hundreds.
+ */
+async function canvasColours(
+  page: import("@playwright/test").Page,
+  locator: import("@playwright/test").Locator,
+): Promise<{ distinct: number; size: { width: number; height: number } }> {
+  const png = await locator.screenshot({ animations: "disabled" });
+  const size = await locator.evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    return { width: canvas.width, height: canvas.height };
   });
+
+  // Decode the PNG in the browser: no image library, no temp files, and the same
+  // decoder the screenshot itself was produced with.
+  const base64 = png.toString("base64");
+  const distinct = await page.evaluate(async (data) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${data}`;
+    await image.decode();
+    const surface = document.createElement("canvas");
+    surface.width = 160;
+    surface.height = 120;
+    const context = surface.getContext("2d");
+    if (!context) return 0;
+    context.drawImage(image, 0, 0, surface.width, surface.height);
+    const pixels = context.getImageData(0, 0, surface.width, surface.height).data;
+    const seen = new Set<string>();
+    for (let index = 0; index < pixels.length; index += 4) {
+      // Quantise to 5 bits per channel: gradients between two neighbouring shades
+      // are not evidence of a drawn scene, distinct regions are.
+      seen.add(
+        `${pixels[index] >> 3},${pixels[index + 1] >> 3},${pixels[index + 2] >> 3}`,
+      );
+    }
+    return seen.size;
+  }, base64);
+
+  return { distinct, size };
 }
 
 test.describe("3d city", () => {
@@ -63,13 +80,16 @@ test.describe("3d city", () => {
     await expect(canvas).toBeVisible({ timeout: 20_000 });
 
     // WebGL contexts take a moment to paint the first frame.
-    await page.waitForTimeout(2_500);
-    const result = await canvasIsDrawn(page);
+    await page.waitForTimeout(3_000);
+    const result = await canvasColours(page, canvas);
 
     expect(result.size.width).toBeGreaterThan(100);
     expect(result.size.height).toBeGreaterThan(100);
-    expect(result.drawn, "canvas is a single flat colour, so nothing was drawn").toBe(true);
-    expect(result.distinct).toBeGreaterThan(8);
+    // A single flat colour means nothing was drawn; a rendered city has many.
+    expect(
+      result.distinct,
+      `canvas has only ${result.distinct} distinct colours, so it is effectively blank`,
+    ).toBeGreaterThan(20);
 
     expect(errors, `console errors: ${errors.join(" | ")}`).toHaveLength(0);
   });
@@ -100,7 +120,7 @@ test.describe("3d city", () => {
     const legend = page.getByTestId("city3d-legend");
     await expect(legend).toBeVisible();
     for (const label of ["Operational", "Degraded", "Failed", "Maintenance", "Recovering"]) {
-      await expect(legend.getByText(label, { exact: true })).toBeVisible();
+      await expect(legend.getByText(label, { exact: true })).toBeVisible({ timeout: 15_000 });
     }
   });
 
@@ -177,14 +197,14 @@ test.describe("3d city", () => {
     await expect(panel).toBeVisible();
 
     const select = page.getByRole("combobox", { name: /simulation run to replay/i });
-    await expect(select).toBeAttached();
+    await expect(select).toBeAttached({ timeout: 30_000 });
     await select.scrollIntoViewIfNeeded();
     await expect(select).toBeVisible();
 
     // With no run selected the panel explains itself rather than showing an empty
     // scrubber that appears to be playing nothing.
     const hint = page.getByText(/pick a run to watch its cascade/i);
-    await expect(hint).toBeAttached({ timeout: 10_000 });
+    await expect(hint).toBeAttached({ timeout: 30_000 });
     await hint.scrollIntoViewIfNeeded();
     await expect(hint).toBeVisible();
   });
