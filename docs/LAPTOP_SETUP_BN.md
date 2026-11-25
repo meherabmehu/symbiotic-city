@@ -245,7 +245,7 @@ cp .env.example .env
 | পোর্ট ৩০০০ বা ৮০০০ busy | আগের কোনো সার্ভার এখনো চলছে | `lsof -i :3000` দিয়ে দেখুন, বা `pkill -f "next dev"` |
 | লগইন পেজে "Cannot reach API" | backend ওঠেনি | `./scripts/dev.sh api` আলাদা টার্মিনালে চালিয়ে লগ দেখুন |
 | ড্যাশবোর্ডে সব শূন্য | ডেটা সিড হয়নি | `.env`-এ `SEED_DEMO_DATA=1` দিন, ডাটাবেজ মুছে আবার চালান |
-| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | Linux/Mac: `FORCE=1 ./scripts/seed.sh` · **Windows: `.\scripts\seed.ps1 -Force`** — দুটোই নিজে থেকেই সঠিক ফাইলটা মুছে নতুন করে সিড করে, `.env`-এর path মানে |
+| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | **Windows: `.\scripts\seed.ps1 -Force`** · Linux/Mac: `FORCE=1 ./scripts/seed.sh` — নিজে থেকেই সঠিক ফাইল খুঁজে সব ডেটা মছে ডেমো আবার বসায়, আর `dev.ps1` চালু থাকলেও কাজ করে |
 | `Permission denied: ./scripts/dev.sh` | এক্সিকিউট বিট নেই | `chmod +x scripts/*.sh` |
 | `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০.৯+ দরকার |
 | `npm install` শেষে `1 critical` / `3 vulnerabilities` | পুরনো `package-lock.json` ধরে আছে | আগে `git pull` করুন। তাও এলে `npm audit fix --force` **চালাবেন না** — বরং `frontend` ফোল্ডারে `package-lock.json` মুছে আবার `npm install` (এতে lock নতুন করে তৈরি হবে, `package.json`-এর ভার্সনই মানবে) |
@@ -443,11 +443,17 @@ cd C:\path\to\symbiotic-city
 
 (অথবা সরাসরি: `. \.venv\Scripts\python.exe scripts\smoke.py`)
 
-**ডাটাবেজ রিসেট:**
+**ডাটাবেজ রিসেট** (সার্ভার বন্ধ করার দরকার নেই):
 
 ```powershell
 .\scripts\seed.ps1 -Force
 ```
+
+> আগে এটা ফাইল মুছতে চাইত, তাই Windows-এ `The process cannot access the file`
+> error দিত — কারণ চলতি API ওই ফাইলটা খোলা রাখে। এখন ফাইল মোছে না, ডেটাবেজের
+> ভেতরের টেবিলগুলো খালি করে আবার সিড করে, তাই সার্ভার চালু রাখলেও চলে।
+> `-KeepRuns` দিলে শুধু সিমুলেশন, অপ্টিমাইজেশন প্ল্যান আর ওয়ার্কফ্লো মুছে যায়;
+> asset/zone/user তালিকা থেকে যায়।
 
 **বন্ধ করতে:** যে টার্মিনালে চলছে সেখানে **Ctrl + C**।
 
@@ -493,7 +499,7 @@ DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.
 | --- | --- |
 | venv python | `.venv\Scripts\python.exe` |
 | venv activate | `.venv\Scripts\Activate.ps1` |
-| ডেটাবেজ রিসেট | `.\scripts\seed.ps1 -Force` (নিজেই সঠিক ফাইল খুঁজে মুছে আবার সিড করে) |
+| ডেটাবেজ রিসেট | `.\scripts\seed.ps1 -Force` (সার্ভার চালু রেখেও চলে; `-KeepRuns` দিলে শুধু সিমুলেশন/প্ল্যান/ওয়ার্কফ্লো মুছে) |
 | টেস্ট চালানো | `.venv\Scripts\python.exe -m pytest backend\tests -q` |
 | smoke test | `.venv\Scripts\python.exe scripts\smoke.py` |
 | পোর্ট busy দেখতে | `Get-NetTCPConnection -LocalPort 3000` |

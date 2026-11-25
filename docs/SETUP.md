@@ -69,6 +69,11 @@ FORCE=1 ./scripts/seed.sh     # bash
 Both ask the app where the database is (so a custom `DATABASE_URL` is honoured)
 rather than assuming a path, and both use the same deterministic seeder.
 
+`seed.ps1` clears the tables instead of deleting the file. On Windows a file
+held open by the running API cannot be deleted, so a delete-based reset fails
+exactly when someone has the app running -- the normal time to want one. Add
+`-KeepRuns` to keep simulation, optimisation and workflow history.
+
 The seeder is deterministic (`random.Random(20260101)`): the same catalogue, the
 same historical incidents, the same ids on every reset.
 
