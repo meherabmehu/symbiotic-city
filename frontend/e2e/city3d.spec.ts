@@ -69,6 +69,14 @@ async function canvasColours(
   return { distinct, size };
 }
 
+/**
+ * A 3D scene plus up to four independent fetches is slower than the 30s default,
+ * and the default is measured from the first navigation. Raised here rather than
+ * by trimming waits, so a slow CI box reports a real failure with a useful diff
+ * instead of a bare timeout.
+ */
+test.describe.configure({ timeout: 75_000 });
+
 test.describe("3d city", () => {
   test("initialises a real WebGL canvas and draws more than a flat colour", async ({ page }) => {
     const errors = trackConsoleErrors(page);
@@ -120,7 +128,10 @@ test.describe("3d city", () => {
     const legend = page.getByTestId("city3d-legend");
     await expect(legend).toBeVisible();
     for (const label of ["Operational", "Degraded", "Failed", "Maintenance", "Recovering"]) {
-      await expect(legend.getByText(label, { exact: true })).toBeVisible({ timeout: 15_000 });
+      // Each legend row is the label plus a count, so this is a substring match
+      // scoped to the legend element -- precise enough to exclude the status
+      // filter dropdown, which shares the wording.
+      await expect(legend.getByText(label)).toBeVisible({ timeout: 15_000 });
     }
   });
 
@@ -197,16 +208,13 @@ test.describe("3d city", () => {
     await expect(panel).toBeVisible();
 
     const select = page.getByRole("combobox", { name: /simulation run to replay/i });
-    await expect(select).toBeAttached({ timeout: 30_000 });
+    await expect(select).toBeVisible({ timeout: 40_000 });
     await select.scrollIntoViewIfNeeded();
-    await expect(select).toBeVisible();
 
     // With no run selected the panel explains itself rather than showing an empty
     // scrubber that appears to be playing nothing.
     const hint = page.getByText(/pick a run to watch its cascade/i);
-    await expect(hint).toBeAttached({ timeout: 30_000 });
-    await hint.scrollIntoViewIfNeeded();
-    await expect(hint).toBeVisible();
+    await expect(hint).toBeVisible({ timeout: 20_000 });
   });
 
   test("rewinds recorded history without claiming to restore it", async ({ page }) => {
