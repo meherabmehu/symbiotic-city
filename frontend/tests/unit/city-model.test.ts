@@ -321,17 +321,23 @@ describe("status resolution", () => {
     // Maintenance is somebody's real, scheduled work. A what-if run must not be
     // able to hide it, or the twin would show a building as fine while an
     // engineer is standing inside it with the power off.
-    expect(resolveVisualStatus("maintenance", { impact: "failed" })).toBe("failed");
-    expect(resolveVisualStatus("maintenance", {})).toBe("maintenance");
+    expect(resolveVisualStatus("maintenance", { impact: "failed" })).toBe("maintenance");
+    expect(resolveVisualStatus("maintenance", { impact: "degraded" })).toBe("maintenance");
+    expect(resolveVisualStatus("maintenance", { recovering: true })).toBe("maintenance");
     expect(resolveVisualStatus("maintenance", {})).toBe("maintenance");
   });
 
   it("shows recovering only when the backend says a plan is approved but unverified", () => {
     expect(resolveVisualStatus("offline", { recovering: true })).toBe("recovering");
     expect(resolveVisualStatus("degraded", { recovering: true })).toBe("recovering");
+
     // Recovery never claims success on its own: an asset the database still calls
     // offline stays failed unless the caller explicitly marked it recovering.
     expect(resolveVisualStatus("offline", {})).toBe("failed");
+
+    // And it cannot be claimed for something that is working: there is no
+    // transition to recover from, so the label would be meaningless.
+    expect(resolveVisualStatus("operational", { recovering: true })).toBe("operational");
   });
 
   it("gives every status a colour, a label and a non-colour mark", () => {
