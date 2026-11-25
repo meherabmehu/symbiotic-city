@@ -12,7 +12,13 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { Box, Frame, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
-import { City3D, hasWebGL, type City3DOverlay, type Quality } from "@/components/city3d/city-3d";
+import {
+  City3D,
+  SCENARIO_LABELS,
+  hasWebGL,
+  type City3DOverlay,
+  type Quality,
+} from "@/components/city3d/city-3d";
 import { CAMERA_MODES, STATUS_STYLES, type CameraMode } from "@/lib/city-model";
 import type { TwinGraph, TwinNode } from "@/lib/types";
 import { Button, Select } from "@/components/ui";
@@ -210,6 +216,31 @@ export function TwinView({
           focusId={focusId}
           height={expanded ? Math.max(height, 720) : height}
         />
+
+        {/* What kind of thing the overlay is, stated in words.
+            A hypothetical cascade and a recorded one are the same geometry; only
+            this badge distinguishes them, and confusing the two is the worst
+            mistake this view can make. Top-right so it never collides with the
+            status legend. */}
+        {overlay?.scenario && overlay.scenario !== "live" ? (
+          <div
+            data-testid="city3d-scenario-badge"
+            className={`pointer-events-none absolute right-3 top-3 rounded-xl border px-3 py-2 backdrop-blur ${
+              overlay.scenario === "hypothetical"
+                ? "border-amber/40 bg-amber/10"
+                : overlay.scenario === "historical"
+                  ? "border-white/15 bg-navy-950/85"
+                  : "border-accent/40 bg-accent/10"
+            }`}
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-300">
+              {SCENARIO_LABELS[overlay.scenario].heading}
+            </p>
+            <p className="mt-0.5 max-w-[190px] text-[9px] leading-snug text-ink-400">
+              {SCENARIO_LABELS[overlay.scenario].detail}
+            </p>
+          </div>
+        ) : null}
 
         {/* The legend is DOM, not in-canvas: text stays crisp, it is selectable,
             and it is read by assistive technology without a canvas hook. */}

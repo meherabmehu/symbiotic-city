@@ -939,6 +939,50 @@ export function buildScenery(assets: PlacedAsset[], grid: RoadGrid, count = 320)
   return props.slice(0, count);
 }
 
+/* ----------------------------------------------------------------- cascade */
+
+/**
+ * Hop count from a cascade's origin to every asset it reaches.
+ *
+ * The simulation API returns a `depth` per impact, but a depth on its own does not
+ * say which asset started the cascade -- and the scene needs that, both to mark the
+ * origin and to draw the propagation outward from it. Walking the dependency graph
+ * breadth-first from the origin gives both, and gives them from data the client
+ * already has.
+ *
+ * Only assets the run actually reported as impacted are kept: an asset downstream
+ * of the origin that the run did not touch must not be drawn as part of the
+ * cascade just because a path exists through it.
+ */
+export function cascadeDepths(
+  edges: { source: number; target: number }[],
+  impacted: Iterable<number>,
+  originId: number | null,
+): Map<number, number> {
+  const depths = new Map<number, number>();
+  if (originId == null) return depths;
+
+  const touched = new Set(impacted);
+  depths.set(originId, 0);
+
+  const queue: number[] = [originId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const next = (depths.get(current) ?? 0) + 1;
+    for (const edge of edges) {
+      if (edge.source !== current) continue;
+      if (depths.has(edge.target)) continue;
+      depths.set(edge.target, next);
+      queue.push(edge.target);
+    }
+  }
+
+  for (const id of [...depths.keys()]) {
+    if (id !== originId && !touched.has(id)) depths.delete(id);
+  }
+  return depths;
+}
+
 /* --------------------------------------------------------------- sidewalks */
 
 export interface Pavement {

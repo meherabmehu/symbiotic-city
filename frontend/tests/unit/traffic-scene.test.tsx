@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import React from "react";
 import ReactThreeTestRenderer from "@react-three/test-renderer";
 import fs from "node:fs";
-import { EmergencyTraffic, Markings, Traffic, TrafficSignals } from "@/components/city3d/city-parts";
+import {
+  CascadeOrigin,
+  EmergencyTraffic,
+  Markings,
+  PropagationRings,
+  Traffic,
+  TrafficSignals,
+} from "@/components/city3d/city-parts";
 import { buildCityModel } from "@/lib/city-model";
 import type { TwinGraph } from "@/lib/types";
 
@@ -121,6 +128,45 @@ describe("traffic scene", () => {
     const renderer = await ReactThreeTestRenderer.create(<TrafficSignals model={model} enabled />);
     const [signals] = instancedMeshes(renderer.scene);
     expect(signals.count).toBe(model.grid.intersections.length * 4);
+    await renderer.unmount();
+  });
+});
+
+describe("cascade overlay", () => {
+  it("expands a ring per hop outward from the origin, not one per asset", async () => {
+    // A cascade is a sequence: the hospital is not affected until the substation
+    // is. Rings encode that ordering; a flat red set does not.
+    const renderer = await ReactThreeTestRenderer.create(
+      <PropagationRings origin={{ x: 0, y: 6, z: 0 }} maxDepth={3} enabled />,
+    );
+    const [rings] = instancedMeshes(renderer.scene);
+    expect(rings.count).toBe(3);
+    await renderer.unmount();
+  });
+
+  it("draws no rings when there is no cascade", async () => {
+    const renderer = await ReactThreeTestRenderer.create(
+      <PropagationRings origin={null} maxDepth={0} enabled />,
+    );
+    expect(instancedMeshes(renderer.scene).length).toBe(0);
+    await renderer.unmount();
+  });
+
+  it("caps the rings so a deep cascade cannot flood the view", async () => {
+    const renderer = await ReactThreeTestRenderer.create(
+      <PropagationRings origin={{ x: 0, y: 6, z: 0 }} maxDepth={40} enabled />,
+    );
+    const [rings] = instancedMeshes(renderer.scene);
+    expect(rings.count).toBe(6);
+    await renderer.unmount();
+  });
+
+  it("marks the origin separately from what it reached", async () => {
+    const renderer = await ReactThreeTestRenderer.create(
+      <CascadeOrigin position={{ x: 12, y: 8, z: -4 }} enabled />,
+    );
+    const mesh = renderer.scene.findByType("Mesh" as never) as unknown as { instance: { position: { x: number } } };
+    expect(mesh.instance.position.x).toBe(12);
     await renderer.unmount();
   });
 });
