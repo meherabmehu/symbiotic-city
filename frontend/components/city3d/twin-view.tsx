@@ -40,6 +40,8 @@ export interface TwinViewProps {
   showZones?: boolean;
   selectedZone?: string | null;
   height?: number;
+  /** Active incidents, which decide whether emergency vehicles are drawn. */
+  activeIncidents?: number;
 }
 
 export function TwinView({
@@ -53,6 +55,7 @@ export function TwinView({
   showZones = true,
   selectedZone = null,
   height = 560,
+  activeIncidents = 0,
 }: TwinViewProps) {
   const [quality, setQuality] = useState<Quality>("balanced");
   const [mode, setMode] = useState<CameraMode>("perspective");
@@ -188,6 +191,7 @@ export function TwinView({
           selectedZone={selectedZone}
           showTraffic={showTraffic}
           showScenery={showScenery}
+          activeIncidents={activeIncidents}
           quality={quality}
           mode={mode}
           focusId={focusId}

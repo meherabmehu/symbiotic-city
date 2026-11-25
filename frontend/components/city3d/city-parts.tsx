@@ -20,6 +20,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   CITY_EXTENT,
+  routePosition,
   vehiclePosition,
   type CityModel,
   type ParkingBay,
@@ -134,39 +135,74 @@ export function Traffic({
   enabled: boolean;
   speed?: number;
 }) {
-  const lanes = model.lanes ?? [];
-  const total = lanes.length * VEHICLES_PER_LANE;
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const clock = useRef(0);
 
-  // Fixed per-vehicle phase, so vehicles are spread along the lane and the pattern
-  // is identical on every mount.
+  /**
+   * The fleet: three vehicles on each turning route, and a couple on each straight
+   * lane for the avenues the block loops do not cover.
+   *
+   * Routes come first so that most of what you see is turning at intersections;
+   * straight lanes fill in the outer streets. Every slot's phase is fixed, so the
+   * same fleet appears on every mount and on every reload.
+   */
   const slots = useMemo(() => {
-    const list: { lane: TrafficLane; progress: number }[] = [];
-    lanes.forEach((lane, laneIndex) => {
-      for (let i = 0; i < VEHICLES_PER_LANE; i += 1) {
+    const list: {
+      kind: "route" | "lane";
+      route?: { x: number; z: number }[];
+      lane?: TrafficLane;
+      length: number;
+      progress: number;
+      /** Seconds of travel offset, so the whole fleet is not one solid block. */
+      phase: number;
+    }[] = [];
+
+    model.routes.forEach((route, routeIndex) => {
+      const count = 3;
+      for (let i = 0; i < count; i += 1) {
         list.push({
-          lane,
-          progress: (i / VEHICLES_PER_LANE + laneIndex * 0.13) % 1,
+          kind: "route",
+          route,
+          length: route.length,
+          progress: 0,
+          phase: (i / count + routeIndex * 0.37) % 1,
         });
       }
     });
-    return list;
-  }, [lanes]);
 
-  // Place every vehicle at its starting offset before the first frame, and keep
-  // re-placing them whenever the lane layout changes. Without this the instance
-  // matrices stay at the identity and the whole fleet sits at the origin until
-  // something else triggers an update.
+    model.lanes.forEach((lane, laneIndex) => {
+      for (let i = 0; i < 2; i += 1) {
+        list.push({
+          kind: "lane",
+          lane,
+          length: lane.length,
+          progress: (i / 2 + laneIndex * 0.21) % 1,
+          phase: 0,
+        });
+      }
+    });
+
+    return list;
+  }, [model.routes, model.lanes]);
+
+  const total = slots.length;
+
+  // A constant clock, advanced in the frame loop and clamped so a backgrounded tab
+  // does not teleport the whole fleet on resume.
+  const clock = useRef(0);
+
   useEffect(() => {
+    // Place the fleet before the first frame; otherwise every instance sits at the
+    // identity matrix, stacked at the origin.
     const mesh = meshRef.current;
     if (!mesh) return;
     slots.forEach((slot, index) => {
-      const { x, z, angle } = vehiclePosition(slot.lane, 0, speed, slot.progress);
-      dummy.position.set(x, 0.55, z);
-      dummy.rotation.set(0, angle, 0);
-      dummy.scale.set(1, 1, 1);
+      const pose =
+        slot.kind === "route" && slot.route
+          ? routePosition(slot.route, clock.current, speed, slot.phase)
+          : vehiclePosition(slot.lane!, clock.current, speed, slot.progress);
+      dummy.position.set(pose.x, 0.55, pose.z);
+      dummy.rotation.set(0, pose.angle, 0);
       dummy.updateMatrix();
       mesh.setMatrixAt(index, dummy.matrix);
     });
@@ -176,14 +212,15 @@ export function Traffic({
   useFrame((_, delta) => {
     const mesh = meshRef.current;
     if (!mesh || !enabled) return;
-    // Clamp the step: a backgrounded tab hands back a huge delta, which would
-    // teleport every vehicle instead of resuming smoothly.
     clock.current += Math.min(delta, 0.1);
 
     slots.forEach((slot, index) => {
-      const { x, z, angle } = vehiclePosition(slot.lane, clock.current, speed, slot.progress);
-      dummy.position.set(x, 0.55, z);
-      dummy.rotation.set(0, angle, 0);
+      const pose =
+        slot.kind === "route" && slot.route
+          ? routePosition(slot.route, clock.current, speed, slot.phase)
+          : vehiclePosition(slot.lane!, clock.current, speed, slot.progress);
+      dummy.position.set(pose.x, 0.55, pose.z);
+      dummy.rotation.set(0, pose.angle, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       mesh.setMatrixAt(index, dummy.matrix);
@@ -195,9 +232,266 @@ export function Traffic({
 
   return (
     <instancedMesh ref={meshRef} args={[undefined, undefined, total]} castShadow={false}>
-      <boxGeometry args={[1.9, 0.7, 1.0]} />
-      <meshStandardMaterial color="#7fc8ff" emissive="#3ea8ff" emissiveIntensity={0.55} roughness={0.4} metalness={0.5} />
+      {/* A car body with a cabin is two boxes; at this scale one rounded box reads
+          fine and stays a single instanced draw call. */}
+      <boxGeometry args={[1.9, 0.65, 1.0]} />
+      <meshStandardMaterial color="#8fd0ff" emissive="#3ea8ff" emissiveIntensity={0.45} roughness={0.45} metalness={0.4} />
     </instancedMesh>
+  );
+}
+
+/**
+ * Emergency vehicles: the ones you would actually see going somewhere.
+ *
+ * They follow the same turning routes as ordinary traffic but faster, and they
+ * carry a flashing light bar. The number is driven by live incidents -- one ambulance
+ * per active incident, capped -- so a quiet city has none and a bad afternoon has
+ * several. That is the difference between decoration and telemetry: nothing here
+ * moves *because* of an incident, but whether these exist at all is read from it.
+ */
+export function EmergencyTraffic({
+  model,
+  enabled,
+  incidents,
+}: {
+  model: CityModel;
+  enabled: boolean;
+  /** Active incidents, which decide how many vehicles respond. */
+  incidents: number;
+}) {
+  const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const lampRef = useRef<THREE.InstancedMesh | null>(null);
+  const lampMaterial = useRef<THREE.MeshStandardMaterial | null>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const clock = useRef(0);
+  const flashing = useRef(0);
+
+  const count = Math.min(6, Math.max(0, incidents));
+
+  const slots = useMemo(
+    () =>
+      model.routes.slice(0, count).map((route, index) => ({
+        route,
+        phase: (index * 0.31) % 1,
+      })),
+    [model.routes, count],
+  );
+
+  useFrame((_, delta) => {
+    const mesh = meshRef.current;
+    const lamps = lampRef.current;
+    if (!mesh || !enabled) return;
+
+    clock.current += Math.min(delta, 0.1);
+    // Faster than the flow they are moving through, which is the only way an
+    // emergency vehicle reads as responding rather than cruising.
+    const speed = 17;
+
+    slots.forEach((slot, index) => {
+      const pose = routePosition(slot.route, clock.current, speed, slot.phase);
+      dummy.position.set(pose.x, 0.6, pose.z);
+      dummy.rotation.set(0, pose.angle, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+
+      if (lamps) {
+        // The bar sits above the cabin, offset along the vehicle's forward axis.
+        dummy.position.set(
+          pose.x + Math.cos(pose.angle) * 0.1,
+          1.05,
+          pose.z - Math.sin(pose.angle) * 0.1,
+        );
+        dummy.rotation.set(0, pose.angle, 0);
+        dummy.updateMatrix();
+        lamps.setMatrixAt(index, dummy.matrix);
+      }
+    });
+
+    mesh.instanceMatrix.needsUpdate = true;
+    if (lamps) lamps.instanceMatrix.needsUpdate = true;
+
+    // Flashing at roughly the rate a light bar actually flashes.
+    flashing.current += delta;
+    const material = lampMaterial.current;
+    if (material) {
+      const on = Math.sin(flashing.current * Math.PI * 2.4) > 0;
+      material.emissiveIntensity = on ? 2.2 : 0.25;
+    }
+  });
+
+  // Place the fleet once so it is not at the origin before the first frame.
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    slots.forEach((slot, index) => {
+      const pose = routePosition(slot.route, clock.current, 17, slot.phase);
+      dummy.position.set(pose.x, 0.6, pose.z);
+      dummy.rotation.set(0, pose.angle, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [slots, dummy]);
+
+  if (!enabled || slots.length === 0) return null;
+
+  return (
+    <group>
+      <instancedMesh ref={meshRef} args={[undefined, undefined, slots.length]}>
+        <boxGeometry args={[2.1, 0.75, 1.05]} />
+        <meshStandardMaterial color="#f2f6ff" emissive="#20304a" emissiveIntensity={0.2} roughness={0.4} metalness={0.3} />
+      </instancedMesh>
+      <instancedMesh ref={lampRef} args={[undefined, undefined, slots.length]}>
+        <boxGeometry args={[0.9, 0.16, 0.3]} />
+        <meshStandardMaterial ref={lampMaterial} color="#ff5d5d" emissive="#ff3d3d" emissiveIntensity={2} />
+      </instancedMesh>
+    </group>
+  );
+}
+
+/**
+ * Traffic signals at the junctions.
+ *
+ * Two lamps per approach on the diagonal corners, so the junction reads as
+ * signalised from any angle. The lamp colour cycles on a fixed period rather than
+ * reacting to the traffic: the vehicles are decoration and do not stop, so a
+ * signal that responded to them would be a simulation of something that is not
+ * happening. It cycles because a city's lights visibly cycle, and that is the
+ * whole claim being made.
+ */
+export function TrafficSignals({ model, enabled }: { model: CityModel; enabled: boolean }) {
+  const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const materialRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  // Four signal heads per junction: two along each axis, on opposite corners.
+  const heads = useMemo(
+    () =>
+      model.grid.intersections.flatMap((point) => [
+        { x: point.x + 4.2, z: point.z + 4.2 },
+        { x: point.x - 4.2, z: point.z - 4.2 },
+        { x: point.x + 4.2, z: point.z - 4.2 },
+        { x: point.x - 4.2, z: point.z + 4.2 },
+      ]),
+    [model.grid.intersections],
+  );
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    heads.forEach((head, index) => {
+      dummy.position.set(head.x, 2.4, head.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [heads, dummy]);
+
+  useFrame(({ clock }) => {
+    const material = materialRef.current;
+    if (!material || !enabled) return;
+    // 9-second cycle: long enough to notice, short enough to see all three phases
+    // without waiting. The emissive colour is what changes, so it costs no geometry.
+    const phase = (clock.elapsedTime % 9) / 9;
+    const colour = phase < 0.45 ? "#37e08a" : phase < 0.52 ? "#ffc24d" : "#ff5d5d";
+    material.emissive.set(colour);
+    material.color.set(colour);
+  });
+
+  if (!enabled || heads.length === 0) return null;
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, heads.length]}>
+      <boxGeometry args={[0.4, 0.55, 0.4]} />
+      <meshStandardMaterial ref={materialRef} color="#37e08a" emissive="#37e08a" emissiveIntensity={1.1} roughness={0.4} />
+    </instancedMesh>
+  );
+}
+
+/**
+ * Lane markings and zebra crossings.
+ *
+ * One instanced mesh for the dashes down the middle of every avenue and one for the
+ * crossing bars at each junction. Painted rather than modelled: they sit two
+ * centimetres above the tarmac so there is no z-fighting with the road surface.
+ */
+export function Markings({ model }: { model: CityModel }) {
+  const dashRef = useRef<THREE.InstancedMesh | null>(null);
+  const crossingRef = useRef<THREE.InstancedMesh | null>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  const dashes = useMemo(() => {
+    const list: { x: number; z: number; rotation: number }[] = [];
+    for (const segment of model.grid.segments) {
+      const horizontal = Math.abs(segment.z2 - segment.z1) < 0.001;
+      const from = horizontal ? Math.min(segment.x1, segment.x2) : Math.min(segment.z1, segment.z2);
+      const to = horizontal ? Math.max(segment.x1, segment.x2) : Math.max(segment.z1, segment.z2);
+      const at = horizontal ? segment.z1 : segment.x1;
+      for (let along = from + 6; along < to - 6; along += 6) {
+        list.push({ x: horizontal ? along : at, z: horizontal ? at : along, rotation: horizontal ? 0 : Math.PI / 2 });
+      }
+    }
+    return list;
+  }, [model.grid.segments]);
+
+  const bars = useMemo(() => {
+    const list: { x: number; z: number; rotation: number }[] = [];
+    for (const point of model.grid.intersections) {
+      // Four bars per crossing, on both approaches of both axes.
+      for (const side of [-1, 1]) {
+        for (let bar = -2; bar <= 2; bar += 1) {
+          list.push({ x: point.x + side * 4.4, z: point.z + bar * 1.1, rotation: Math.PI / 2 });
+          list.push({ x: point.x + bar * 1.1, z: point.z + side * 4.4, rotation: 0 });
+        }
+      }
+    }
+    return list;
+  }, [model.grid.intersections]);
+
+  useEffect(() => {
+    const mesh = dashRef.current;
+    if (!mesh) return;
+    dashes.forEach((dash, index) => {
+      dummy.position.set(dash.x, 0.035, dash.z);
+      dummy.rotation.set(0, dash.rotation, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [dashes, dummy]);
+
+  useEffect(() => {
+    const mesh = crossingRef.current;
+    if (!mesh) return;
+    bars.forEach((bar, index) => {
+      dummy.position.set(bar.x, 0.04, bar.z);
+      dummy.rotation.set(0, bar.rotation, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [bars, dummy]);
+
+  return (
+    <group>
+      {dashes.length > 0 ? (
+        <instancedMesh ref={dashRef} args={[undefined, undefined, dashes.length]}>
+          <boxGeometry args={[2.6, 0.02, 0.17]} />
+          <meshStandardMaterial color="#5b7ea8" roughness={0.85} />
+        </instancedMesh>
+      ) : null}
+      {bars.length > 0 ? (
+        <instancedMesh ref={crossingRef} args={[undefined, undefined, bars.length]}>
+          <boxGeometry args={[0.7, 0.02, 3.4]} />
+          <meshStandardMaterial color="#8ea9c6" roughness={0.8} />
+        </instancedMesh>
+      ) : null}
+    </group>
   );
 }
 
