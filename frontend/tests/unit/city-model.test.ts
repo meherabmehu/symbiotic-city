@@ -10,7 +10,9 @@ import {
   buildZoneHulls,
   cameraPose,
   clampTarget,
+  fitPose,
   focusPose,
+  incidentPose,
   placeAssets,
   resolveVisualStatus,
   toScene,
@@ -18,6 +20,7 @@ import {
   vehiclePosition,
   visualStatusFor,
 } from "@/lib/city-model";
+import type { CameraPose } from "@/lib/city-model";
 import type { TwinEdge, TwinGraph, TwinNode, Zone } from "@/lib/types";
 
 /* --------------------------------------------------------------- fixtures */
@@ -475,6 +478,54 @@ describe("camera", () => {
 });
 
 /* ------------------------------------------------------------------- model */
+
+describe("camera framing", () => {
+  it("frames the whole city in a narrow viewport by pulling back further", () => {
+    // A fixed distance crops the model in a tall window. The fit has to use the
+    // narrower of the two fields of view, which is the one that would crop first.
+    const wide = fitPose("perspective", 2.2);
+    const tall = fitPose("perspective", 0.6);
+
+    const reach = (pose: CameraPose) => Math.hypot(...pose.position);
+    expect(reach(tall)).toBeGreaterThan(reach(wide));
+  });
+
+  it("keeps the preset's viewing direction when fitting", () => {
+    const top = fitPose("top", 1.6);
+    // Top-down means looking straight down: x and z must stay near zero relative to
+    // the height, or "fit" would quietly turn into an isometric view.
+    const height = Math.hypot(...top.position);
+    expect(Math.abs(top.position[1])).toBeCloseTo(height, 5);
+    // The preset itself leans by a thousandth of a unit so the up vector never
+    // becomes degenerate; the fit preserves that lean rather than removing it.
+    expect(Math.hypot(top.position[0], top.position[2]) / height).toBeLessThan(0.01);
+  });
+
+  it("clears the whole city at every aspect ratio", () => {
+    for (const aspect of [0.5, 0.9, 1.6, 2.4]) {
+      const pose = fitPose("isometric", aspect);
+      const reach = Math.hypot(...pose.position);
+      // The city's half-diagonal is ~CITY_EXTENT * 1.41; a fit distance shorter
+      // than that would put the camera inside the model.
+      expect(reach, `aspect ${aspect} is too close`).toBeGreaterThan(CITY_EXTENT * 1.2);
+    }
+  });
+
+  it("frames an incident further out than the asset it started at", () => {
+    // An incident is about what it reaches, not just the building: the camera has
+    // to include the streets the consequence runs along.
+    const asset = { position: { x: 10, y: 0, z: -20 }, footprint: { width: 6, depth: 6, height: 9, plot: 12 } };
+    const assetPose = focusPose(asset.position, asset.footprint);
+    const incident = incidentPose(asset.position, asset.footprint);
+
+    const reach = (pose: CameraPose) =>
+      Math.hypot(pose.position[0] - pose.target[0], pose.position[1] - pose.target[1], pose.position[2] - pose.target[2]);
+    expect(reach(incident)).toBeGreaterThan(reach(assetPose));
+    // And it must still be looking at the incident.
+    expect(incident.target[0]).toBeCloseTo(10, 5);
+    expect(incident.target[2]).toBeCloseTo(-20, 5);
+  });
+});
 
 describe("city model", () => {
   it("returns null for a missing graph instead of an empty scene", () => {

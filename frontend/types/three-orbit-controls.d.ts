@@ -40,6 +40,13 @@ declare module "three/examples/jsm/controls/OrbitControls.js" {
     touches: { ONE: number; TWO: number };
 
     update(deltaTime?: number): boolean;
+    /**
+     * Not in the documented public API, but present on the class and used by its own
+     * wheel handler. Called here so a keyboard zoom takes exactly the same path as a
+     * scroll wheel, including the min/max distance limits.
+     */
+    dollyIn(scale?: number): void;
+    dollyOut(scale?: number): void;
     dispose(): void;
     /** Snapshot the current camera and target, for a later `reset()`. */
     saveState(): void;
