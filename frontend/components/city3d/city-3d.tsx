@@ -36,6 +36,7 @@ import {
 } from "@/lib/city-model";
 import type { Impact, TwinGraph, TwinNode } from "@/lib/types";
 import { Building } from "@/components/city3d/buildings";
+import { SceneStatsReporter, type SceneStats } from "@/components/city3d/scene-stats";
 import {
   CascadeOrigin,
   DependencyLinks,
@@ -143,6 +144,8 @@ export interface City3DProps {
    * A counter rather than a boolean: pressing "fit" twice should fit twice.
    */
   fitRequest?: number;
+  /** Receives measured scene statistics roughly twice a second, when supplied. */
+  onStats?: (stats: SceneStats) => void;
   className?: string;
   height?: number;
 }
@@ -183,6 +186,7 @@ export function City3D(props: City3DProps) {
     focusId = null,
     focusIncidentId = null,
     fitRequest = 0,
+    onStats,
     className,
     height = 520,
   } = props;
@@ -393,6 +397,7 @@ export function City3D(props: City3DProps) {
         onPointerMissed={() => onSelect?.(null)}
       >
         <CameraCapture cameraRef={cameraRef} />
+        {onStats ? <SceneStatsReporter onStats={onStats} /> : null}
         <SceneColor />
         {/* Lighting: one hemisphere for ambient fill (cheap) and one directional
             key light. Shadows are high-quality only. */}
