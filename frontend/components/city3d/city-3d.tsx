@@ -327,8 +327,15 @@ export function City3D(props: City3DProps) {
       {/* Keyboard access to the camera. The canvas itself cannot take focus and does
           not respond to keys, so keystrokes are handled on the wrapper: arrows pan,
           plus and minus zoom, and the number keys pick a preset. Everything here
-          duplicates a pointer gesture, so nothing is keyboard-only. */}
+          duplicates a pointer gesture, so nothing is keyboard-only.
+
+          `h-full` is load-bearing, not cosmetic: React Three Fiber sizes its canvas
+          from `height: 100%` of its ancestors, and a percentage against an auto-height
+          parent resolves to `content` -- which for a fresh `<canvas>` is its intrinsic
+          150px. Without this the canvas collapsed to a 150px strip at the top of the
+          panel and the rest of the viewport was empty background. */}
       <div
+        className="h-full w-full"
         tabIndex={0}
         role="application"
         aria-label="City view: arrow keys pan, plus and minus zoom, 1 2 3 switch between perspective, isometric and top-down"

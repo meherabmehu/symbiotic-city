@@ -10,6 +10,11 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * CI installs the browser with `npx playwright install --with-deps chromium`;
  * locally run `npx playwright install chromium` once.
+ *
+ * Where that download is blocked (restricted networks, offline machines), point
+ * PLAYWRIGHT_CHROMIUM_PATH at any runnable Chromium binary instead -- the tests
+ * need nothing from Playwright's own build beyond launching it. Left unset, this
+ * changes nothing: Playwright uses its installed browser as usual.
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -31,6 +36,11 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
+    // Escape hatch for environments where Playwright's browser CDN is
+    // unreachable: any runnable Chromium works. Unset -> Playwright default.
+    ...(process.env.PLAYWRIGHT_CHROMIUM_PATH
+      ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH } }
+      : {}),
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
