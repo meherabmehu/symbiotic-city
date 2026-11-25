@@ -26,7 +26,6 @@ import {
   type TrafficLane,
   type ZoneHull,
 } from "@/lib/city-model";
-import { SceneryProp } from "@/components/city3d/buildings";
 
 /* ------------------------------------------------------------------ ground */
 
@@ -354,25 +353,117 @@ export function heatColor(score: number): string {
 /* ----------------------------------------------------------------- scenery */
 
 /**
- * Decorative props, instanced per kind.
+ * Decorative props, one instanced mesh per part.
  *
- * Four instanced meshes for the whole scatter, regardless of count. They are
- * never clickable and carry no asset id -- the separation from operational
- * infrastructure is structural, not a naming convention.
+ * A tree is a trunk and a canopy; at 220 props drawn individually that is 440
+ * objects and as many draw calls, for geometry that is entirely static. Instead
+ * each part of each kind becomes a single `InstancedMesh`, so the whole scatter
+ * costs a fixed handful of draw calls regardless of how much of it there is.
+ *
+ * They are never clickable and carry no asset id -- the separation from
+ * operational infrastructure is structural, not a naming convention.
  */
 export function Scenery({ model, enabled }: { model: CityModel; enabled: boolean }) {
   if (!enabled) return null;
+  return <InstancedScenery scenery={model.scenery} />;
+}
+
+/** Part definitions per prop kind: the same shapes the single-prop renderer uses. */
+const PROP_PARTS: Record<
+  string,
+  { geometry: "cylinder" | "icosahedron" | "box" | "sphere"; args: number[]; y: number; colour: string; emissive?: string; emissiveIntensity?: number; flat?: boolean }[]
+> = {
+  tree: [
+    { geometry: "cylinder", args: [0.16, 0.22, 1.8, 6], y: 0.9, colour: "#2b2119" },
+    { geometry: "icosahedron", args: [1.15, 0], y: 2.4, colour: "#1f6f52", flat: true },
+  ],
+  car: [
+    { geometry: "box", args: [1.7, 0.62, 0.95], y: 0.42, colour: "#2c4a6e" },
+    { geometry: "box", args: [1.0, 0.36, 0.82], y: 0.82, colour: "#101b2b" },
+  ],
+  lamp: [
+    { geometry: "cylinder", args: [0.07, 0.1, 4, 6], y: 2, colour: "#33465e" },
+    { geometry: "sphere", args: [0.22, 8, 8], y: 4.1, colour: "#ffd9a0", emissive: "#ffb545", emissiveIntensity: 1.6 },
+  ],
+  bench: [
+    { geometry: "box", args: [1.5, 0.12, 0.45], y: 0.35, colour: "#3a4f6b" },
+  ],
+};
+
+function InstancedScenery({ scenery }: { scenery: CityModel["scenery"] }) {
+  const byKind = useMemo(() => {
+    const groups = new Map<string, CityModel["scenery"]>();
+    for (const prop of scenery) {
+      const list = groups.get(prop.kind) ?? [];
+      list.push(prop);
+      groups.set(prop.kind, list);
+    }
+    return groups;
+  }, [scenery]);
+
   return (
     <group>
-      {model.scenery.map((prop, index) => (
-        <SceneryProp
-          key={index}
-          kind={prop.kind}
-          position={prop.position}
-          rotation={prop.rotation}
-          scale={prop.scale}
-        />
+      {[...byKind].map(([kind, props]) => (
+        <InstancedKind key={kind} kind={kind} props={props} />
       ))}
     </group>
   );
 }
+
+function InstancedKind({ kind, props }: { kind: string; props: CityModel["scenery"] }) {
+  const parts = PROP_PARTS[kind] ?? PROP_PARTS.bench;
+  const refs = useRef<(THREE.InstancedMesh | null)[]>([]);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  // Matrices are set once: scenery never moves, so this is a mount-time cost and
+  // not a per-frame one.
+  useEffect(() => {
+    props.forEach((prop, index) => {
+      dummy.position.set(prop.position.x, 0, prop.position.z);
+      dummy.rotation.set(0, prop.rotation, 0);
+      dummy.scale.setScalar(prop.scale);
+      dummy.updateMatrix();
+      refs.current.forEach((mesh) => mesh?.setMatrixAt(index, dummy.matrix));
+    });
+    refs.current.forEach((mesh) => {
+      if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    });
+  }, [props, dummy]);
+
+  return (
+    <group>
+      {parts.map((part, partIndex) => (
+        <instancedMesh
+          key={partIndex}
+          ref={(node) => {
+            refs.current[partIndex] = node;
+          }}
+          args={[undefined, undefined, props.length]}
+          // Each part sits at its own height above the prop's base. Applying it to
+          // the mesh rather than to the geometry keeps one matrix per instance,
+          // which is what makes the instancing worth doing.
+          position={[0, part.y, 0]}
+          castShadow={kind === "tree"}
+        >
+          {part.geometry === "cylinder" ? (
+            <cylinderGeometry args={part.args as [number, number, number, number]} />
+          ) : part.geometry === "icosahedron" ? (
+            <icosahedronGeometry args={part.args as [number, number]} />
+          ) : part.geometry === "sphere" ? (
+            <sphereGeometry args={part.args as [number, number, number]} />
+          ) : (
+            <boxGeometry args={part.args as [number, number, number]} />
+          )}
+          <meshStandardMaterial
+            color={part.colour}
+            roughness={part.flat ? 0.85 : 0.9}
+            flatShading={part.flat}
+            emissive={part.emissive ?? "#000000"}
+            emissiveIntensity={part.emissiveIntensity ?? 0}
+          />
+        </instancedMesh>
+      ))}
+    </group>
+  );
+}
+

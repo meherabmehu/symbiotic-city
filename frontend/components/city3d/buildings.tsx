@@ -45,49 +45,64 @@ export interface MaterialSet {
  * building is visibly lit from within, which survives a colour-blind viewer
  * seeing it as "bright" even if the hue is indistinguishable.
  */
-export function useStatusMaterials(): Record<VisualStatus, MaterialSet> {
-  return useMemo(() => {
-    const make = (status: VisualStatus): MaterialSet => {
-      const style = STATUS_STYLES[status];
-      const color = new THREE.Color(style.color);
-      return {
-        body: new THREE.MeshStandardMaterial({
-          color: new THREE.Color("#1b2b45"),
-          emissive: color,
-          emissiveIntensity: style.glow * 0.32,
-          metalness: 0.35,
-          roughness: 0.55,
-        }),
-        glass: new THREE.MeshStandardMaterial({
-          color: new THREE.Color("#0e1a2c"),
-          emissive: color,
-          emissiveIntensity: style.glow * 0.55,
-          metalness: 0.6,
-          roughness: 0.25,
-        }),
-        trim: new THREE.MeshStandardMaterial({
-          color: new THREE.Color("#22354f"),
-          metalness: 0.4,
-          roughness: 0.7,
-        }),
-        beacon: new THREE.MeshStandardMaterial({
-          color,
-          emissive: color,
-          emissiveIntensity: 1.4,
-          transparent: true,
-          opacity: 0.92,
-        }),
-      };
-    };
+/**
+ * Materials, created once for the whole scene and shared.
+ *
+ * They were originally built inside each building, which meant 23 buildings x 5
+ * statuses x 4 materials -- around 460 material objects, each a separate shader
+ * program, for twenty distinct appearances. Sharing them lets the renderer batch
+ * buildings that are in the same state instead of switching material per draw.
+ *
+ * The cache lives at module scope because these materials are immutable: a status
+ * is chosen by picking a set, never by mutating one, so there is nothing to
+ * invalidate.
+ */
+let sharedMaterials: Record<VisualStatus, MaterialSet> | null = null;
 
-    return {
-      operational: make("operational"),
-      degraded: make("degraded"),
-      failed: make("failed"),
-      maintenance: make("maintenance"),
-      recovering: make("recovering"),
+function buildMaterialSet(status: VisualStatus): MaterialSet {
+  const style = STATUS_STYLES[status];
+  const color = new THREE.Color(style.color);
+  return {
+    body: new THREE.MeshStandardMaterial({
+      color: new THREE.Color("#1b2b45"),
+      emissive: color,
+      emissiveIntensity: style.glow * 0.32,
+      metalness: 0.35,
+      roughness: 0.55,
+    }),
+    glass: new THREE.MeshStandardMaterial({
+      color: new THREE.Color("#0e1a2c"),
+      emissive: color,
+      emissiveIntensity: style.glow * 0.55,
+      metalness: 0.6,
+      roughness: 0.25,
+    }),
+    trim: new THREE.MeshStandardMaterial({
+      color: new THREE.Color("#22354f"),
+      metalness: 0.4,
+      roughness: 0.7,
+    }),
+    beacon: new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 1.4,
+      transparent: true,
+      opacity: 0.92,
+    }),
+  };
+}
+
+export function useStatusMaterials(): Record<VisualStatus, MaterialSet> {
+  if (!sharedMaterials) {
+    sharedMaterials = {
+      operational: buildMaterialSet("operational"),
+      degraded: buildMaterialSet("degraded"),
+      failed: buildMaterialSet("failed"),
+      maintenance: buildMaterialSet("maintenance"),
+      recovering: buildMaterialSet("recovering"),
     };
-  }, []);
+  }
+  return sharedMaterials;
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -206,6 +221,7 @@ export function Building({
   position,
   rotation,
   selected,
+  castShadow = true,
   onSelect,
   onHover,
 }: {
@@ -215,6 +231,8 @@ export function Building({
   position: { x: number; y: number; z: number };
   rotation: number;
   selected: boolean;
+  /** Off on the low quality preset, where the shadow pass costs more than it adds. */
+  castShadow?: boolean;
   onSelect?: () => void;
   onHover?: (hovering: boolean) => void;
 }) {
@@ -246,7 +264,7 @@ export function Building({
     >
       {/* A plinth so the building reads as standing on prepared ground, and a
           selection ring is drawn just outside it. */}
-      <mesh position={[0, 0.08, 0]} receiveShadow>
+      <mesh position={[0, 0.08, 0]} receiveShadow={castShadow}>
         <boxGeometry args={[footprint.width + 2.2, 0.16, footprint.depth + 2.2]} />
         <meshStandardMaterial color="#16233a" roughness={0.9} metalness={0.1} />
       </mesh>
@@ -265,8 +283,8 @@ export function Building({
             position={part.position}
             rotation={[0, part.rotationY ?? 0, 0]}
             material={set[part.material]}
-            castShadow
-            receiveShadow
+            castShadow={castShadow}
+            receiveShadow={castShadow}
           >
             {part.kind === "box" ? (
               <boxGeometry args={part.size} />
