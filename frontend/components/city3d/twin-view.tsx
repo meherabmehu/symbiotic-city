@@ -20,6 +20,7 @@ import {
   type Quality,
 } from "@/components/city3d/city-3d";
 import { CAMERA_MODES, STATUS_STYLES, type CameraMode } from "@/lib/city-model";
+import type { SceneStats } from "@/components/city3d/scene-stats";
 import type { TwinGraph, TwinNode } from "@/lib/types";
 import { Button, Select } from "@/components/ui";
 
@@ -69,6 +70,7 @@ export function TwinView({
   const [showTraffic, setShowTraffic] = useState(true);
   // A counter, not a boolean: pressing "Fit city" twice should fit twice.
   const [fitRequest, setFitRequest] = useState(0);
+  const [stats, setStats] = useState<SceneStats | null>(null);
   const [showScenery, setShowScenery] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [listOpen, setListOpen] = useState(false);
@@ -190,6 +192,38 @@ export function TwinView({
         </Button>
       </div>
 
+      {stats ? (
+        <details data-testid="city3d-stats" className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+          <summary className="cursor-pointer text-[11px] text-ink-400">
+            Scene cost · {stats.drawCalls} draw calls · {stats.fps} fps
+          </summary>
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] sm:grid-cols-4">
+            {[
+              ["Draw calls", String(stats.drawCalls)],
+              ["Triangles", stats.triangles.toLocaleString("en-US")],
+              ["Meshes", String(stats.meshes)],
+              ["Instanced meshes", `${stats.instancedMeshes} (${stats.instances} instances)`],
+              ["Materials", String(stats.materials)],
+              ["Geometries", String(stats.geometries)],
+              ["Textures", String(stats.textures)],
+              ["Shaders", String(stats.programs)],
+              ["JS heap", stats.heapMb == null ? "not exposed" : `${stats.heapMb} MB`],
+              ["Frame rate", `${stats.fps} fps`],
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-2">
+                <dt className="text-ink-600">{label}</dt>
+                <dd className="font-mono text-ink-300">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-[9px] leading-snug text-ink-600">
+            Read from three.js&apos;s own renderer counters after the last drawn frame, in this
+            browser. Frame rate is the only number that depends on your machine; the rest describe the
+            scene. Heap is shown only where the browser exposes it.
+          </p>
+        </details>
+      ) : null}
+
       {error ? (
         <p className="rounded-lg border border-coral/30 bg-coral/10 px-3 py-2 text-xs text-coral" role="alert">
           {error}
@@ -210,6 +244,7 @@ export function TwinView({
           showScenery={showScenery}
           activeIncidents={activeIncidents}
           fitRequest={fitRequest}
+          onStats={setStats}
           quality={quality}
           mode={mode}
           onModeChange={setMode}
