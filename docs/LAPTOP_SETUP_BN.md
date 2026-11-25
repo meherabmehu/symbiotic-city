@@ -46,7 +46,8 @@ npm --version
 
 > **Windows ব্যবহার করলে** — পুরো সেকশন আছে নিচে: **[উইন্ডোজ / PowerShell](#উইন্ডোজ--powershell)**।
 > সংক্ষেপে: PowerShell 5.1-এ `&&` চলে না, তাই নিচের bash কমান্ডগুলো হুবহু পেস্ট করলে
-> কাজ করবে না। এর জন্য আলাদা স্ক্রিপ্ট `scripts\dev.ps1` দেওয়া আছে।
+> কাজ করবে না। এর জন্য দুটো আলাদা স্ক্রিপ্ট দেওয়া আছে — `scripts\dev.ps1` (ইনস্টল +
+> চালু) আর `scripts\seed.ps1` (ডাটাবেজ রিসেট)।
 
 ---
 
@@ -244,7 +245,7 @@ cp .env.example .env
 | পোর্ট ৩০০০ বা ৮০০০ busy | আগের কোনো সার্ভার এখনো চলছে | `lsof -i :3000` দিয়ে দেখুন, বা `pkill -f "next dev"` |
 | লগইন পেজে "Cannot reach API" | backend ওঠেনি | `./scripts/dev.sh api` আলাদা টার্মিনালে চালিয়ে লগ দেখুন |
 | ড্যাশবোর্ডে সব শূন্য | ডেটা সিড হয়নি | `.env`-এ `SEED_DEMO_DATA=1` দিন, ডাটাবেজ মুছে আবার চালান |
-| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | `FORCE=1 ./scripts/seed.sh` — নিজে থেকেই সঠিক ফাইলটা মুছে নতুন করে সিড করে। হাতে করতে চাইলে `rm backend/data/symbiotic_city.db*` (`.env`-এ path বদলে থাকলে সেটাই) |
+| ডাটাবেজ পুরো রিসেট করতে চাই | পুরনো ডেটা জমেছে | Linux/Mac: `FORCE=1 ./scripts/seed.sh` · **Windows: `.\scripts\seed.ps1 -Force`** — দুটোই নিজে থেকেই সঠিক ফাইলটা মুছে নতুন করে সিড করে, `.env`-এর path মানে |
 | `Permission denied: ./scripts/dev.sh` | এক্সিকিউট বিট নেই | `chmod +x scripts/*.sh` |
 | `npm install` এ error | Node পুরনো | `node --version` দেখুন, ২০.৯+ দরকার |
 | `npm install` শেষে `1 critical` / `3 vulnerabilities` | পুরনো `package-lock.json` ধরে আছে | আগে `git pull` করুন। তাও এলে `npm audit fix --force` **চালাবেন না** — বরং `frontend` ফোল্ডারে `package-lock.json` মুছে আবার `npm install` (এতে lock নতুন করে তৈরি হবে, `package.json`-এর ভার্সনই মানবে) |
@@ -418,6 +419,48 @@ cd C:\path\to\symbiotic-city        # যেখানে README.md আছে
 
 তারপর ব্রাউজারে <http://127.0.0.1:3000>।
 
+### এক নজরে সব কমান্ড (Windows — কপি করে পেস্ট করুন)
+
+**প্রথমবার, শূন্য থেকে** (একটাই কমান্ড, বাকিটা নিজে করে):
+
+```powershell
+cd C:\path\to\symbiotic-city
+.\scripts\dev.ps1 setup
+```
+
+**প্রতিবার চালু করতে:**
+
+```powershell
+cd C:\path\to\symbiotic-city
+.\scripts\dev.ps1
+```
+
+**চালু আছে কি না যাচাই (আলাদা টার্মিনালে):**
+
+```powershell
+.\scripts\smoke.ps1
+```
+
+(অথবা সরাসরি: `. \.venv\Scripts\python.exe scripts\smoke.py`)
+
+**ডাটাবেজ রিসেট:**
+
+```powershell
+.\scripts\seed.ps1 -Force
+```
+
+**বন্ধ করতে:** যে টার্মিনালে চলছে সেখানে **Ctrl + C**।
+
+**কিছু ভেঙে গেলে শূন্য থেকে আবার:**
+
+```powershell
+Remove-Item -Recurse -Force .venv, frontend\node_modules, frontend\.next, backend\data
+.\scripts\dev.ps1 setup
+```
+
+> `Remove-Item` diye `.venv` মুছতে সময় লাগে, ধৈর্য ধরুন। `backend\data` মুছলে
+> ডেটা নতুন করে সিড হবে — ডেমো ডেটা, তাই ক্ষতি নেই।
+
 ### উইন্ডোজে যে বাগটা ধরা পড়েছিল
 
 আপনার প্রশ্নের কারণে একটা আসল বাগ পাওয়া গেছে, সেটা ঠিক করা হয়েছে।
@@ -450,7 +493,7 @@ DATABASE_URL=sqlite:///C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.
 | --- | --- |
 | venv python | `.venv\Scripts\python.exe` |
 | venv activate | `.venv\Scripts\Activate.ps1` |
-| ডেটাবেজ রিসেট | `Remove-Item backend\data\symbiotic_city.db*` (path বদলে থাকলে `.env`-এ যা লেখা আছে সেটাই মুছুন) |
+| ডেটাবেজ রিসেট | `.\scripts\seed.ps1 -Force` (নিজেই সঠিক ফাইল খুঁজে মুছে আবার সিড করে) |
 | টেস্ট চালানো | `.venv\Scripts\python.exe -m pytest backend\tests -q` |
 | smoke test | `.venv\Scripts\python.exe scripts\smoke.py` |
 | পোর্ট busy দেখতে | `Get-NetTCPConnection -LocalPort 3000` |
