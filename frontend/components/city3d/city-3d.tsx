@@ -250,6 +250,10 @@ export function City3D(props: City3DProps) {
               rotation={asset.rotation}
               selected={selectedId === asset.node.id}
               onSelect={() => onSelect?.(asset.node)}
+              // Casting shadows is the single most expensive thing a building
+              // does, and on a low preset it buys nothing at the camera distances
+              // the preset is meant for.
+              castShadow={shadows}
             />
           ))}
 
