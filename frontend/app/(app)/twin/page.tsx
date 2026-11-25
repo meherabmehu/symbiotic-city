@@ -6,7 +6,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -121,6 +121,13 @@ export default function TwinPage() {
     }
     return result;
   }, [replayLevels, heatOn, heatmap.data, timeline.data, timelineIndex, data]);
+
+  // Stable identity: the replay panel pushes a frame per animation tick, and a new
+  // callback each render would re-run its effect on every frame.
+  const handleReplayFrame = useCallback(
+    (levels: Map<number, "failed" | "degraded" | "affected">) => setReplayLevels(levels),
+    [],
+  );
 
   const timelineFrame = useMemo(
     () =>
@@ -391,7 +398,7 @@ export default function TwinPage() {
               loading={runs.loading || replayDetail.loading}
               error={runs.error ?? replayDetail.error}
               reducedMotion={reducedMotion}
-              onFrame={(levels) => setReplayLevels(levels)}
+              onFrame={handleReplayFrame}
             />
           </Panel>
 

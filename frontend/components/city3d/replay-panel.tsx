@@ -13,7 +13,7 @@
  * action when it finishes -- clear the overlay.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { AlertTriangle, Pause, Play, RotateCcw, Users } from "lucide-react";
 import { Badge, Button, Select } from "@/components/ui";
 import { formatNumber } from "@/lib/format";
@@ -46,9 +46,11 @@ export function ReplayPanel({
   const replay = useReplay(detail, { reducedMotion });
   const { frame, playhead, playing, duration } = replay;
 
-  // Push each frame up to the scene. Kept in the render pass rather than an effect
-  // so the overlay and the scrubber can never disagree about the moment shown.
-  useMemo(() => {
+  // Push each frame up to the scene. This is an effect rather than a call during
+  // render: notifying a parent from the render pass is a side effect React is
+  // entitled to run twice (StrictMode does), and it would set state on a component
+  // that is mid-render.
+  useEffect(() => {
     onFrame?.(frame.levels as Map<number, "failed" | "degraded" | "affected">, frame.population);
   }, [frame, onFrame]);
 
