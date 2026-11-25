@@ -11,12 +11,9 @@ import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
-  ArrowUpRight,
-  Cpu,
   Flame,
   GitCompare,
   History,
-  Layers,
   Network,
   Play,
   Share2,
@@ -24,12 +21,13 @@ import {
 } from "lucide-react";
 import { ZoneSummary } from "@/components/city-twin";
 import { TwinView } from "@/components/city3d/twin-view";
+import { TwinMetricsRow, type IncidentSummary } from "@/components/city3d/twin-metrics";
 import { HeatmapPanel } from "@/components/city3d/heatmap-panel";
 import { ReplayPanel } from "@/components/city3d/replay-panel";
 import { TimelinePanel, presentFrame, timelineOverlay } from "@/components/city3d/timeline-panel";
 import { LensPanel, type LensMode } from "@/components/city3d/lens-panel";
 import { RunComparePanel } from "@/components/city3d/run-compare-panel";
-import { frameAt, statusSteps } from "@/lib/timeline";
+import { frameAt } from "@/lib/timeline";
 import type { City3DOverlay } from "@/components/city3d/city-3d";
 import {
   Alert,
@@ -38,15 +36,13 @@ import {
   Panel,
   PanelHeader,
   PageHeader,
-  ProgressBar,
-  Select,
   StatusPill,
 } from "@/components/ui";
 import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatNumber, percent } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
 import type {
+  AssetDetail,
   CriticalityIndex,
   Heatmap,
   Incident,
@@ -59,21 +55,10 @@ import type {
   TwinNode,
 } from "@/lib/types";
 
-const LEGEND_FILTERS = [
-  { value: "all", label: "All statuses" },
-  { value: "operational", label: "Operational only" },
-  { value: "degraded", label: "Degraded only" },
-  { value: "offline", label: "Offline only" },
-  { value: "maintenance", label: "In maintenance" },
-];
-
 export default function TwinPage() {
   const { can } = useAuth();
   const router = useRouter();
   const [selected, setSelected] = useState<TwinNode | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [showEdges, setShowEdges] = useState(true);
-  const [showZones, setShowZones] = useState(true);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [heatOn, setHeatOn] = useState(false);
   const [heatZone, setHeatZone] = useState<string | null>(null);
@@ -281,11 +266,22 @@ export default function TwinPage() {
     [selected?.id],
   );
 
-  const graph = useMemo(() => {
-    if (!data) return null;
-    if (statusFilter === "all") return data;
-    return { ...data, nodes: data.nodes.filter((node) => node.status === statusFilter) };
-  }, [data, statusFilter]);
+  // The metric cards read their own endpoints: the incident summary and the
+  // 24h intake for the incidents card, the asset register for the dossier.
+  // Each fails independently -- a card that cannot load says so rather than
+  // taking the viewport down with it.
+  const incidentSummary = useAsync<IncidentSummary>(() => api.get("/incidents/summary"), []);
+  const recentIncidents = useAsync<Incident[]>(
+    async () => (await api.list<Incident>("/incidents?page_size=50&sort=reported_at&direction=desc")).data,
+    [],
+  );
+  const assetDetail = useAsync<AssetDetail>(
+    () =>
+      selected
+        ? api.get(`/infrastructure/${selected.id}`)
+        : Promise.resolve(null as unknown as AssetDetail),
+    [selected?.id],
+  );
 
   const stats = data?.stats;
   const criticalNodes = useMemo(
@@ -298,8 +294,8 @@ export default function TwinPage() {
     <>
       <PageHeader
         eyebrow="Digital twin"
-        title="Interactive city"
-        description="A living 3D model of Aurora Vale: five zones, every registered asset and every modelled dependency, with traffic on the avenues. Rotate, zoom and select a building to inspect what it depends on, then launch a simulation from the failure lab."
+        title="Interactive 3D City"
+        description="Real-time digital twin of Aurora Vale — monitor, analyse and orchestrate a self-healing city."
         actions={
           <>
             <Button variant="secondary" onClick={reload}>
@@ -329,60 +325,43 @@ export default function TwinPage() {
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        {/* min-w-0: a grid child defaults to min-width:auto, so the canvas would
-            otherwise be able to push the column past the viewport. */}
-        <div className="min-w-0 space-y-4">
-          <Panel className="p-3 sm:p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Select
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value)}
-                  aria-label="Filter twin by status"
-                  className="py-1.5 text-xs"
-                >
-                  {LEGEND_FILTERS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  variant={showEdges ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setShowEdges((v) => !v)}
-                  aria-pressed={showEdges}
-                >
-                  <Network className="h-3.5 w-3.5" aria-hidden /> {showEdges ? "Dependencies on" : "Dependencies off"}
-                </Button>
-                <Button
-                  variant={showZones ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setShowZones((v) => !v)}
-                  aria-pressed={showZones}
-                >
-                  <Layers className="h-3.5 w-3.5" aria-hidden /> {showZones ? "Zones on" : "Zones off"}
-                </Button>
-              </div>
-              <p className="text-[11px] text-ink-500">Synthetic layout · assets placed from the twin graph, roads routed around their plots</p>
-            </div>
-            <TwinView
-              graph={graph}
-              loading={loading}
-              error={error}
-              overlay={overlay}
-              selectedId={selected?.id ?? null}
-              onSelect={setSelected}
-              showEdges={showEdges}
-              showZones={showZones}
-              selectedZone={heatZone}
-              activeIncidents={(data?.nodes ?? []).reduce((sum, node) => sum + (node.active_incidents ?? 0), 0)}
-              height={560}
-            />
-          </Panel>
+      {/* The viewport owns the top of the screen the way the reference
+          dashboard composes it: control bar, stats strip, the city itself, and
+          the metric cards directly beneath. Everything below is analysis. */}
+      <TwinView
+        graph={data}
+        loading={loading}
+        error={error}
+        overlay={overlay}
+        selectedId={selected?.id ?? null}
+        onSelect={setSelected}
+        selectedZone={heatZone}
+        activeIncidents={(data?.nodes ?? []).reduce((sum, node) => sum + (node.active_incidents ?? 0), 0)}
+        height={600}
+        belowCanvas={
+          <TwinMetricsRow
+            graph={data}
+            criticality={criticality.data}
+            criticalityLoading={criticality.loading}
+            criticalityError={criticality.error}
+            heatmap={heatmap.data}
+            heatmapLoading={heatmap.loading}
+            heatmapError={heatmap.error}
+            incidentSummary={incidentSummary.data}
+            incidentSummaryError={incidentSummary.error}
+            recentIncidents={recentIncidents.data}
+            selected={selected}
+            onSelect={setSelected}
+            detail={assetDetail.data && assetDetail.data.id === selected?.id ? assetDetail.data : null}
+            detailLoading={assetDetail.loading}
+            detailError={assetDetail.error}
+            selectedIncidents={assetIncidents.data ?? []}
+            selectedIncidentsLoading={assetIncidents.loading}
+          />
+        }
+      />
 
-          <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <Panel>
               <PanelHeader title="Critical services" subtitle="Priority 1–2 assets in the model" icon={<AlertTriangle className="h-4 w-4" />} />
               <ul className="space-y-2">
@@ -402,183 +381,6 @@ export default function TwinPage() {
               </ul>
             </Panel>
             <ZoneSummary zones={data?.zones ?? []} nodes={data?.nodes ?? []} />
-          </div>
-        </div>
-
-        {/* details drawer-equivalent panel */}
-        <div className="space-y-4">
-          <Panel>
-            <PanelHeader
-              title={selected ? selected.name : "No asset selected"}
-              subtitle={selected ? `${selected.zone ?? "Unzoned"} · ${selected.category.replace(/_/g, " ")}` : "Select an asset on the map or from the navigator."}
-              icon={<Layers className="h-4 w-4" />}
-            />
-            {selected ? (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-ink-400">{selected.code}</span>
-                  <StatusPill status={selected.status} />
-                </div>
-                <dl className="space-y-2 text-xs">
-                  <div className="flex justify-between">
-                    <dt className="text-ink-500">Category</dt>
-                    <dd className="text-ink-100">{selected.category.replace(/_/g, " ")}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-ink-500">Criticality</dt>
-                    <dd className="text-ink-100">Priority {selected.criticality}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-ink-500">Capacity</dt>
-                    <dd className="text-ink-100">{formatNumber(selected.capacity, 0)}</dd>
-                  </div>
-                  <div>
-                    <div className="mb-1 flex justify-between">
-                      <dt className="text-ink-500">Load</dt>
-                      <dd className="text-ink-100">{percent(selected.load_percent, 0)}</dd>
-                    </div>
-                    <ProgressBar
-                      value={selected.load_percent}
-                      tone={selected.load_percent > 85 ? "coral" : selected.load_percent > 65 ? "amber" : "mint"}
-                      label={`${selected.name} load`}
-                    />
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-ink-500">Active incidents</dt>
-                    <dd className={selected.active_incidents ? "text-amber" : "text-ink-100"}>
-                      {selected.active_incidents}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-ink-500">Dependencies</dt>
-                    <dd className="text-ink-100">
-                      {data?.edges.filter((edge) => edge.target === selected.id).length ?? 0} in ·{" "}
-                      {data?.edges.filter((edge) => edge.source === selected.id).length ?? 0} out
-                    </dd>
-                  </div>
-                </dl>
-                <div className="space-y-1.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
-                    Depends on
-                  </p>
-                  {data?.edges
-                    .filter((edge) => edge.target === selected.id)
-                    .map((edge) => {
-                      const source = data.nodes.find((node) => node.id === edge.source);
-                      return (
-                        <p key={edge.id} className="rounded-lg bg-white/[0.03] px-2 py-1 text-[11px] text-ink-300">
-                          {source?.code} · weight {edge.impact_weight.toFixed(2)} · redundancy{" "}
-                          {edge.redundancy.toFixed(2)}
-                        </p>
-                      );
-                    })}
-                  {!data?.edges.some((edge) => edge.target === selected.id) ? (
-                    <p className="text-[11px] text-ink-500">No upstream dependencies recorded.</p>
-                  ) : null}
-                </div>
-                <div className="space-y-1.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
-                    Feeds
-                  </p>
-                  {data?.edges
-                    .filter((edge) => edge.source === selected.id)
-                    .map((edge) => {
-                      const target = data.nodes.find((node) => node.id === edge.target);
-                      return (
-                        <p key={edge.id} className="rounded-lg bg-white/[0.03] px-2 py-1 text-[11px] text-ink-300">
-                          {target?.code} · {target?.name}
-                        </p>
-                      );
-                    })}
-                  {!data?.edges.some((edge) => edge.source === selected.id) ? (
-                    <p className="text-[11px] text-ink-500">Nothing depends on this asset directly.</p>
-                  ) : null}
-                </div>
-
-                <div className="space-y-1.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
-                    Open incidents
-                  </p>
-                  {assetIncidents.loading ? (
-                    <p className="text-[11px] text-ink-500" role="status">
-                      Loading incidents…
-                    </p>
-                  ) : assetIncidents.error ? (
-                    <p className="text-[11px] text-coral" role="alert">
-                      Incident list unavailable: {assetIncidents.error}
-                    </p>
-                  ) : (assetIncidents.data ?? []).filter((incident) => !incident.resolved_at).length > 0 ? (
-                    (assetIncidents.data ?? [])
-                      .filter((incident) => !incident.resolved_at)
-                      .slice(0, 4)
-                      .map((incident) => (
-                        <Link
-                          key={incident.id}
-                          href={`/incidents/${incident.id}`}
-                          className="flex items-center justify-between gap-2 rounded-lg bg-amber/10 px-2 py-1 text-[11px] text-amber hover:bg-amber/15"
-                        >
-                          <span className="truncate">
-                            <span className="font-mono text-[10px] opacity-80">{incident.code}</span>{" "}
-                            {incident.title}
-                          </span>
-                          <span className="shrink-0 uppercase tracking-wide opacity-80">
-                            {incident.severity}
-                          </span>
-                        </Link>
-                      ))
-                  ) : (
-                    <p className="text-[11px] text-ink-500">
-                      {selected.active_incidents > 0
-                        ? "The asset reports an active incident, but none are open against it in the register."
-                        : "No incidents open against this asset."}
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
-                    What you can do
-                  </p>
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <Link href={`/infrastructure/${selected.id}`} className="btn-secondary btn-sm">
-                      Full details <ArrowUpRight className="h-3 w-3" />
-                    </Link>
-                    {can("simulation:run") ? (
-                      <Link href={`/simulation?asset=${selected.id}`} className="btn-primary btn-sm">
-                        <Cpu className="h-3 w-3" /> Simulate failure
-                      </Link>
-                    ) : null}
-                    {can("incident:create") && selected.status !== "offline" ? (
-                      <Link href={`/incidents?asset=${selected.id}`} className="btn-secondary btn-sm">
-                        <AlertTriangle className="h-3 w-3" /> Report incident
-                      </Link>
-                    ) : null}
-                  </div>
-                  {/* Say what is withheld, not just what is offered: a missing button
-                      is indistinguishable from a missing feature. */}
-                  {!can("simulation:run") || !can("incident:create") ? (
-                    <p className="text-[11px] text-ink-500">
-                      {[
-                        !can("simulation:run") ? "simulating a failure" : null,
-                        !can("incident:create") ? "reporting an incident" : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" and ")}{" "}
-                      {!can("simulation:run") && !can("incident:create") ? "require" : "requires"} a role your
-                      account does not have. Nothing here writes to the model.
-                    </p>
-                  ) : null}
-                </div>
-
-              </div>
-            ) : (
-              <p className="text-sm text-ink-400">
-                Pick a node on the map. Each node shows status colour, load height and an amber marker when an
-                incident is open.
-              </p>
-            )}
-          </Panel>
-
           <Panel>
             <PanelHeader
               title="Resilience lens"
@@ -598,7 +400,6 @@ export default function TwinPage() {
               }}
             />
           </Panel>
-
           <Panel>
             <PanelHeader
               title="Exposure heatmap"
@@ -615,7 +416,6 @@ export default function TwinPage() {
               onSelectZone={setHeatZone}
             />
           </Panel>
-
           <Panel>
             <PanelHeader
               title="Time travel"
@@ -636,7 +436,6 @@ export default function TwinPage() {
               }}
             />
           </Panel>
-
           <Panel>
             <PanelHeader
               title="Compare two runs"
@@ -655,7 +454,6 @@ export default function TwinPage() {
               error={compareA.error ?? compareB.error}
             />
           </Panel>
-
           <Panel>
             <PanelHeader
               title="Replay a cascade"
@@ -673,7 +471,6 @@ export default function TwinPage() {
               onFrame={handleReplayFrame}
             />
           </Panel>
-
           <Panel>
             <PanelHeader title="Failure propagation" subtitle="How impact is modelled" icon={<Network className="h-4 w-4" />} />
             <p className="text-xs leading-relaxed text-ink-400">
@@ -701,7 +498,6 @@ export default function TwinPage() {
               </Alert>
             ) : null}
           </Panel>
-        </div>
       </div>
     </>
   );
