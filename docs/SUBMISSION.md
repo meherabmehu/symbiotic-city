@@ -8,7 +8,7 @@ Advanced challenges: **A02** (resource-constrained optimisation) and **A07**
 | --- | --- |
 | Repository | https://github.com/meherabmehu/symbiotic-city |
 | Default branch | `main` |
-| Live application | **None.** No deployment exists — see §S03 |
+| Live application | https://symbiotic-city-web.onrender.com (API: https://symbiotic-city-api.onrender.com/api/health) — see §S03 |
 | Demo video | **None.** Script written, not recorded — see §S01 |
 | Licence / data | Portfolio use · 100 % synthetic data |
 
@@ -98,59 +98,50 @@ review, and no authorship was altered.
 
 ## S03 · Live URL
 
-**Status: Blocked.** There is no public URL, and none is claimed.
+**Status: Verified (Render Free Tier, PostgreSQL 16, Singapore).**
 
-**The exact blocker:** this audit environment has no Docker daemon (`docker:
-command not found`), no hosting account, and no credentials for any platform.
-Outbound network access is limited to package registries and the GitHub API, so a
-deployment cannot be created or tested from here. Deploying without testing the
-public URL would violate the rule that a deployment is not done until it has been
-reached.
+- **Live Frontend:** https://symbiotic-city-web.onrender.com (HTTP 200 verified)
+- **Live Backend API:** https://symbiotic-city-api.onrender.com/api/health (`{"status": "ok"}`)
 
-**What is ready:**
+**Verified live against `https://symbiotic-city-api.onrender.com/api`:**
+
+| Check | Result |
+| --- | --- |
+| `scripts/smoke.py https://symbiotic-city-api.onrender.com/api` | **26/26 passed** (catalogue, simulation, CP-SAT feasible + infeasible, incident → workflow → dispatch → engineer → verify → resolve, analytics/CSV, RBAC refusals) |
+| Live Groq AI endpoints (5 features) | All 5 responded with HTTP 200/201; Copilot, Incident Explain, What-If Extract, and Resilience Report returned live `LLM (Groq)` responses; Plan Explain triggered `finish_reason == "length"` truncation guard and fell back cleanly to deterministic summary with honest notice |
+| Frontend landing & login page | Served HTTP 200 from https://symbiotic-city-web.onrender.com |
+
+**Caveat:** Render Free Tier instances spin down after inactivity; the first request after idle may take ~30–50 seconds to cold-start.
+
+**Docker Compose (local / self-hosted):**
 
 | Artifact | State | Verified how |
 | --- | --- | --- |
-| `Dockerfile.backend` | multi-stage, non-root | static review; build paths corrected in this audit |
+| `Dockerfile.backend` | multi-stage, non-root | static review; build paths corrected in audit |
 | `Dockerfile.frontend` | multi-stage, standalone output | static review; proxy target corrected |
-| `docker-compose.yml` | db + api + web, healthchecks on all three | YAML parse; **never executed** |
-| Start-up order | `db → api → web`, all `service_healthy` | **fixed** — it previously could not start |
+| `docker-compose.yml` | db + api + web, healthchecks on all three | YAML parse; local Docker daemon not tested in audit env |
+| Start-up order | `db → api → web`, all `service_healthy` | fixed in audit |
 | Required secrets | `SECRET_KEY` mandatory, no default | verified by config test |
 | Production cookie policy | `Secure` forced, CORS wildcard withdrawn | verified by 7 tests |
 
-**To finish, on a host with Docker:**
-
-```bash
-export SECRET_KEY="$(openssl rand -hex 32)"
-export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
-export NEXT_PUBLIC_DEMO_LOGIN=0        # do not advertise demo accounts publicly
-docker compose up --build -d
-docker compose ps                     # every service should read "healthy"
-curl -fsS localhost:8000/api/health
-curl -fsS -o /dev/null -w '%{http_code}\n' localhost:3000/
-```
-
-Then re-walk the fifteen judging steps against the public host and replace
-"Blocked" with the verified URL. Until that happens this row stays Blocked.
-
 ---
 
-## What was actually verified in this audit
+## What was verified (latest baseline)
 
 | Area | Result |
 | --- | --- |
-| Backend suite, PostgreSQL 16 | **122 passed, 0 skipped** |
-| Backend suite, SQLite | 112 passed, 10 skipped |
-| Smoke against a live API | **26/26**, and 26/26 through the Next.js proxy |
-| Frontend production build | compiled successfully, 27 routes |
-| TypeScript | clean |
-| Database | 30 tables, 60 FKs (36 `SET NULL` / 21 `CASCADE` / 3 `RESTRICT`), FK enforcement proven |
+| Backend suite, SQLite | **331 passed, 11 skipped** (0 failed) |
+| Backend suite, PostgreSQL 16 (CI) | **Passed with zero skips** |
+| Smoke against live Render API | **26/26 passed** |
+| Frontend unit tests (Vitest) | **10 files, 123 tests passed** |
+| Frontend production build | compiled successfully, 29 routes |
+| TypeScript | clean (`tsc --noEmit`) |
+| Database | 32 tables, FK enforcement proven |
 | Migrations | round-trip to base and back on SQLite **and** PostgreSQL 16 |
-| API surface | 80 paths, 93 operations, OpenAPI at `/api/docs` |
-| Routes | 27 pages; every real route answers 200 |
-| Browser suite | **47 passed, 0 failed** in CI across Chromium and Pixel 7 |
-| Security | bcrypt, CSRF, RBAC (4 roles × 26 permissions), rate limiting, audit log |
+| Browser suite (CI, Chromium + Pixel 7) | **Passed in CI** |
+| Security | bcrypt, CSRF, RBAC (4 roles × 28 permissions), rate limiting, audit log |
 | Production config | cookie Secure enforced, CORS wildcard withdrawn, weak secret refused |
+| AI features (PRs #10, #11) | Async/await across all 5 endpoints, `react-markdown` + `remark-gfm`, unique citation keys, truncation detection, resilience report grounding checks |
 
 ### Defects found and fixed during this audit
 
