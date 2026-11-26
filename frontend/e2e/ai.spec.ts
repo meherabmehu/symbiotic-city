@@ -3,7 +3,7 @@ import { login } from "./helpers";
 
 /**
  * P4: the five AI features as users reach them. The e2e backend runs with
- * no GROQ key, so every test below exercises the honest rule-based path and
+ * no LLM key, so every test below exercises the honest rule-based path and
  * asserts the provider label says so — the same label the LLM path swaps in
  * when a key exists (that swap is covered by mocked backend tests).
  */
