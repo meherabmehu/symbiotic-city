@@ -13,6 +13,7 @@ they run identically on Linux, macOS and Windows.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path, PureWindowsPath
 
 import pytest
@@ -27,7 +28,14 @@ def _settings(url: str) -> Settings:
 
 def test_posix_absolute_url():
     url = "sqlite:////tmp/symbiotic_test.db"
-    assert _settings(url).sqlite_path == Path("/tmp/symbiotic_test.db")
+    resolved = _settings(url).sqlite_path
+    assert resolved is not None
+    if os.name == "nt":
+        # A POSIX-rooted path has no native Windows drive. SQLite/Path anchors
+        # it to the current drive, which is the only usable local equivalent.
+        assert resolved == Path("/tmp/symbiotic_test.db").resolve()
+    else:
+        assert resolved == Path("/tmp/symbiotic_test.db")
 
 
 def test_windows_absolute_url_is_not_resolved_against_the_repo():
@@ -37,9 +45,9 @@ def test_windows_absolute_url_is_not_resolved_against_the_repo():
 
     assert resolved is not None
     assert PureWindowsPath(str(resolved)).is_absolute()
-    assert str(resolved) == "C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.db"
-    assert str(REPO_DIR) not in str(resolved), (
-        "a Windows absolute path must not be prefixed with the repository root"
+    assert resolved.as_posix() == "C:/Users/USER/symbiotic-city/backend/data/symbiotic_city.db"
+    assert "/C:/" not in resolved.as_posix(), (
+        "a Windows absolute path must not be prefixed as <repo>/C:/..."
     )
 
 

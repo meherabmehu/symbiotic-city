@@ -40,11 +40,36 @@ class AiRateLimited(AiError):
         self.retry_after = retry_after
 
 
+class AiTruncated(AiError):
+    """The provider stopped at its output-token limit.
+
+    The partial text is carried so callers can log/measure it, but it is never
+    rendered: a half sentence ("No resource is over-") shown to an operator
+    reads as a complete finding. ``completion_tokens`` and ``limit`` explain
+    *why* it stopped, which is what makes the failure diagnosable instead of
+    a mystery fallback.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        partial_text: str = "",
+        completion_tokens: int | None = None,
+        limit: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.partial_text = partial_text
+        self.completion_tokens = completion_tokens
+        self.limit = limit
+
+
 @dataclass(frozen=True)
 class AiReply:
     text: str
     model: str
     provider: str  # "groq" -- features label model output with this
+    finish_reason: str
 
 
 Message = Mapping[str, str]
@@ -81,7 +106,7 @@ class GroqProvider:
             "model": self._model,
             "messages": list(messages),
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
         }
         request = httpx.Request(
             "POST",
@@ -126,13 +151,34 @@ class GroqProvider:
 
         try:
             body: dict[str, Any] = response.json()
-            content = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            content = choice["message"]["content"]
+            finish_reason = choice.get("finish_reason")
+            usage = body.get("usage") or {}
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise AiError("The AI provider returned an unreadable response") from exc
         if not isinstance(content, str) or not content.strip():
             raise AiError("The AI provider returned an empty response")
+        if finish_reason == "length":
+            completion_tokens = usage.get("completion_tokens")
+            logger.info(
+                "groq reply truncated at the token limit (completion_tokens=%s limit=%s)",
+                completion_tokens,
+                max_tokens,
+            )
+            raise AiTruncated(
+                "The AI provider reached its response limit; an incomplete answer was discarded",
+                partial_text=content.strip(),
+                completion_tokens=completion_tokens if isinstance(completion_tokens, int) else None,
+                limit=max_tokens,
+            )
 
-        return AiReply(text=content.strip(), model=str(body.get("model") or self._model), provider="groq")
+        return AiReply(
+            text=content.strip(),
+            model=str(body.get("model") or self._model),
+            provider="groq",
+            finish_reason=str(finish_reason or "unknown"),
+        )
 
 
 def get_provider() -> GroqProvider | None:
