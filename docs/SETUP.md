@@ -196,6 +196,16 @@ npm run e2e                       # starts the API and the app itself
 
 Requires a seeded database (`SEED_DEMO_DATA=1`) and the demo accounts.
 
+If Playwright's browser CDN is unreachable from your network, point the suite at
+any Chromium binary you already have instead of downloading one:
+
+```bash
+PLAYWRIGHT_CHROMIUM_PATH=/path/to/chromium npm run e2e
+```
+
+The config passes that path through to `launchOptions.executablePath`, so the
+suite runs against your browser with no other changes.
+
 ## 5. Troubleshooting
 
 | Symptom | Cause and fix |

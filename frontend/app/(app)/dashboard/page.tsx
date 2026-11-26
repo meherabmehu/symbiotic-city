@@ -23,6 +23,9 @@ import {
   Zap,
 } from "lucide-react";
 import { ComparisonBarChart, StatusDonut, TrendAreaChart } from "@/components/charts";
+import { TwinView } from "@/components/city3d/twin-view";
+import { NotificationTicker } from "@/components/notification-ticker";
+import { CityCopilot } from "@/components/ai/city-copilot";
 import {
   Alert,
   Badge,
@@ -40,7 +43,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatNumber, percent, timeAgo } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
-import type { DashboardBundle } from "@/lib/types";
+import type { DashboardBundle, TwinGraph } from "@/lib/types";
 
 const STATUS_COLORS: Record<string, string> = {
   operational: "#3ee6a5",
@@ -56,6 +59,11 @@ export default function DashboardPage() {
     () => api.get("/dashboard"),
     [],
   );
+  // The reference dashboard gives the map the whole top of the screen. Same
+  // idea here: the dashboard mounts the real twin graph (any signed-in role
+  // can read it) so the city on this page is the same live city as /twin,
+  // not a picture of one.
+  const twin = useAsync<TwinGraph>(() => api.get("/twin/graph"), []);
 
   const overview = data?.overview;
   const roleLabel = user?.roles[0]?.name ?? "Member";
@@ -113,6 +121,80 @@ export default function DashboardPage() {
 
       {data ? (
         <div className="space-y-4">
+          <section aria-label="Live city view" className="overflow-hidden rounded-2xl border border-white/10 bg-navy-950/50">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/[0.02] px-4 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-2 w-2" aria-hidden>
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint/60 motion-reduce:animate-none" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-mint" />
+                </span>
+                <span className="label text-[10px]">Live city view</span>
+                <span className="text-xs text-ink-400">
+                  Aurora Vale · {twin.data?.nodes.length ?? overview?.assets_total ?? 0} assets
+                </span>
+              </div>
+              <Link href="/twin" className="btn-ghost btn-sm">
+                Open full twin <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+              </Link>
+            </header>
+            <div className="relative">
+              <TwinView
+                graph={twin.data}
+                loading={twin.loading}
+                error={twin.error}
+                activeIncidents={(twin.data?.nodes ?? []).reduce(
+                  (sum, node) => sum + (node.active_incidents ?? 0),
+                  0,
+                )}
+                height={400}
+                canvasOverlay={
+                  <div className="absolute right-3 top-[170px] z-20 hidden w-60 space-y-2 lg:block">
+                    {/* The reference's map-corner readouts, anchored to the canvas
+                        itself (clear of the compass stack). Desktop only: below lg
+                        the KPI strip underneath carries the same figures instead
+                        of covering a phone-sized canvas. */}
+                    <div className="glass rounded-xl p-3">
+                  <p className="label text-[10px] text-ink-400">City status</p>
+                  <p className="mt-1 flex items-baseline gap-2">
+                    <span className="text-2xl font-bold tabular-nums text-white">
+                      {overview ? `${overview.health_index.toFixed(1)}%` : "—"}
+                    </span>
+                    <span className="text-[11px] text-mint">health index</span>
+                  </p>
+                  <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-300">
+                    {statusData.map((entry) => (
+                      <li key={entry.name} className="flex items-center gap-1.5">
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: entry.color }} aria-hidden />
+                        {entry.name}
+                        <span className="tabular-nums text-ink-500">{entry.value}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="glass pointer-events-auto rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="label text-[10px] text-ink-400">Active incidents</p>
+                    <span
+                      className={`text-lg font-bold tabular-nums ${
+                        (overview?.active_incidents ?? 0) > 0 ? "text-coral" : "text-mint"
+                      }`}
+                    >
+                      {overview?.active_incidents ?? 0}
+                    </span>
+                  </div>
+                  <Link
+                    href="/incidents"
+                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-accent transition hover:text-white"
+                  >
+                    Open incident desk <ArrowUpRight className="h-3 w-3" aria-hidden />
+                  </Link>
+                </div>
+              </div>
+                }
+              />
+            </div>
+          </section>
+
           <section aria-label="Key indicators" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               label="City health index"
@@ -147,6 +229,8 @@ export default function DashboardPage() {
               icon={<Gauge className="h-4 w-4" />}
             />
           </section>
+
+          <CityCopilot />
 
           <div className="grid gap-4 xl:grid-cols-3">
             <Panel className="xl:col-span-2">
@@ -471,6 +555,8 @@ export default function DashboardPage() {
             Figures are aggregated from stored operational records · generated {timeAgo(data?.generated_at)} ·
             synthetic dataset
           </p>
+
+          <NotificationTicker />
         </div>
       ) : null}
     </>

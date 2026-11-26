@@ -672,7 +672,14 @@ export interface CriticalityRow {
 export interface CriticalityIndex {
   generated_at: string;
   model: { weights: Record<string, number>; assumptions: string[] };
-  fleet: { assets_scored: number; mean_index: number; max_index: number; min_index: number };
+  /**
+   * Fleet-level counts, exactly as `/resilience/criticality` returns them.
+   * The mean/peak of the ranking is derived from `ranking` (see
+   * `lib/criticality.ts`) -- earlier versions of this type claimed fields the
+   * API never sent, and every consumer that called `.toFixed` on them crashed
+   * as soon as the data landed.
+   */
+  fleet: { assets: number; total_dependencies: number; critical_assets: number };
   ranking: CriticalityRow[];
 }
 

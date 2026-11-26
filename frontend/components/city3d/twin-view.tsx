@@ -10,7 +10,7 @@
  * missing entirely.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useRef, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Box, Frame, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
 import {
   City3D,
@@ -22,6 +22,7 @@ import {
 import { CAMERA_MODES, STATUS_STYLES, type CameraMode } from "@/lib/city-model";
 import type { SceneStats } from "@/components/city3d/scene-stats";
 import type { TwinGraph, TwinNode } from "@/lib/types";
+import { timeAgo } from "@/lib/format";
 import { Button, Select } from "@/components/ui";
 
 const QUALITY_LABELS: Record<Quality, string> = {
@@ -36,6 +37,14 @@ const CAMERA_ICON: Record<CameraMode, React.ComponentType<{ className?: string }
   top: Frame,
 };
 
+const LEGEND_FILTERS = [
+  { value: "all", label: "All statuses" },
+  { value: "operational", label: "Operational only" },
+  { value: "degraded", label: "Degraded only" },
+  { value: "offline", label: "Offline only" },
+  { value: "maintenance", label: "In maintenance" },
+];
+
 export interface TwinViewProps {
   graph: TwinGraph | null;
   loading?: boolean;
@@ -43,12 +52,19 @@ export interface TwinViewProps {
   overlay?: City3DOverlay;
   selectedId?: number | null;
   onSelect?: (node: TwinNode | null) => void;
-  showEdges?: boolean;
-  showZones?: boolean;
   selectedZone?: string | null;
   height?: number;
   /** Active incidents, which decide whether emergency vehicles are drawn. */
   activeIncidents?: number;
+  /**
+   * Rendered between the viewport and the keyboard navigator -- the metric cards
+   * the reference design parks directly beneath the city. Kept as a slot so this
+   * component still owns everything that talks to the canvas, while the page
+   * owns the data those cards read.
+   */
+  belowCanvas?: ReactNode;
+  /** Rendered inside the canvas box -- see City3DProps.overlaySlot. */
+  canvasOverlay?: ReactNode;
 }
 
 export function TwinView({
@@ -58,27 +74,60 @@ export function TwinView({
   overlay,
   selectedId = null,
   onSelect,
-  showEdges = true,
-  showZones = true,
   selectedZone = null,
   height = 560,
   activeIncidents = 0,
+  belowCanvas,
+  canvasOverlay,
 }: TwinViewProps) {
   const [quality, setQuality] = useState<Quality>("balanced");
   const [mode, setMode] = useState<CameraMode>("perspective");
   const [focusId, setFocusId] = useState<number | null>(null);
   const [showTraffic, setShowTraffic] = useState(true);
+  // The canvas overlays live *in* the viewport, so the switches that control
+  // them live here too: a toggle outside the canvas that changes what is drawn
+  // inside it is exactly the kind of split that left both sides out of sync.
+  const [showEdges, setShowEdges] = useState(true);
+  const [showZones, setShowZones] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("all");
   // A counter, not a boolean: pressing "Fit city" twice should fit twice.
   const [fitRequest, setFitRequest] = useState(0);
+  // "Reset view" and Expand both mean "give me the default shot again" -- the
+  // second at the new panel size -- so they share a reframe counter.
+  const [resetRequest, setResetRequest] = useState(0);
+  // What the last framing command asked for, so Expand can re-apply it at the
+  // new panel size instead of silently swapping one intent for the other.
+  const framingIntent = useRef<"fill" | "whole">("fill");
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [showScenery, setShowScenery] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   const webgl = useMemo(() => hasWebGL(), []);
 
+  // Filtering here rather than in the page keeps the legend, the navigator and
+  // the canvas looking at exactly the same set of assets.
+  const visibleGraph = useMemo<TwinGraph | null>(() => {
+    if (!graph) return null;
+    if (statusFilter === "all") return graph;
+    return { ...graph, nodes: graph.nodes.filter((node) => node.status === statusFilter) };
+  }, [graph, statusFilter]);
+
+  const applyMode = useCallback((next: CameraMode) => {
+    // A preset is a *direction*, and the raw preset distance was tuned for one
+    // aspect ratio: at 1024 it crops, at 1920 it leaves gaps. So a preset click
+    // also re-solves the distance for the viewport actually on screen --
+    // immersive framing for the angled views, the whole grid for top-down.
+    framingIntent.current = next === "top" ? "whole" : "fill";
+    setMode(next);
+    if (next === "top") setFitRequest((count) => count + 1);
+    else setResetRequest((count) => count + 1);
+  }, []);
+
   const resetView = useCallback(() => {
     setFocusId(null);
+    framingIntent.current = "fill";
     setMode("perspective");
+    setResetRequest((count) => count + 1);
   }, []);
 
   const select = useCallback(
@@ -91,12 +140,12 @@ export function TwinView({
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const node of graph?.nodes ?? []) {
+    for (const node of visibleGraph?.nodes ?? []) {
       const visual = node.status === "offline" ? "failed" : node.status;
       counts[visual] = (counts[visual] ?? 0) + 1;
     }
     return counts;
-  }, [graph]);
+  }, [visibleGraph]);
 
   if (!webgl) {
     return (
@@ -112,26 +161,43 @@ export function TwinView({
             No action is lost.
           </p>
         </div>
-        <AssetList graph={graph} selectedId={selectedId} onSelect={select} defaultOpen />
+        {/* The metric cards do not depend on WebGL, so they still render here. */}
+        {belowCanvas}
+        <AssetList graph={visibleGraph} selectedId={selectedId} onSelect={select} defaultOpen />
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      {/* Controls. Kept as a toolbar above the canvas so they never cover the
-          city on a small screen. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+      {/* Control bar: one dark rail holding every viewport control, in the
+          reference's composition -- camera and view actions on the left, quality
+          and expand pinned right. Wraps rather than scrolls, so nothing is ever
+          hidden behind a hover on a small screen. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-2">
+        <Select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+          aria-label="Filter twin by status"
+          className="py-1.5 text-xs"
+        >
+          {LEGEND_FILTERS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+
+        <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-navy-950/60 p-1">
           {(Object.keys(CAMERA_MODES) as CameraMode[]).map((key) => {
             const Icon = CAMERA_ICON[key];
             return (
               <button
                 key={key}
-                onClick={() => setMode(key)}
+                onClick={() => applyMode(key)}
                 aria-pressed={mode === key}
                 title={CAMERA_MODES[key].description}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] transition ${
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] transition ${
                   mode === key ? "bg-accent/15 text-accent" : "text-ink-400 hover:bg-white/5 hover:text-ink-200"
                 }`}
               >
@@ -149,7 +215,10 @@ export function TwinView({
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setFitRequest((value) => value + 1)}
+          onClick={() => {
+            framingIntent.current = "whole";
+            setFitRequest((value) => value + 1);
+          }}
           title="Frame the whole city in the panel, whatever its size"
         >
           <Frame className="h-3.5 w-3.5" aria-hidden /> Fit city
@@ -173,29 +242,65 @@ export function TwinView({
           {showScenery ? "Scenery on" : "Scenery off"}
         </Button>
 
-        <Select
-          value={quality}
-          onChange={(event) => setQuality(event.target.value as Quality)}
-          aria-label="3D quality"
-          className="py-1.5 text-xs"
-        >
-          {(Object.keys(QUALITY_LABELS) as Quality[]).map((key) => (
-            <option key={key} value={key}>
-              {QUALITY_LABELS[key]}
-            </option>
-          ))}
-        </Select>
+        <div className="ml-auto flex items-center gap-2">
+          <Select
+            value={quality}
+            onChange={(event) => setQuality(event.target.value as Quality)}
+            aria-label="3D quality"
+            className="py-1.5 text-xs"
+          >
+            {(Object.keys(QUALITY_LABELS) as Quality[]).map((key) => (
+              <option key={key} value={key}>
+                {QUALITY_LABELS[key]}
+              </option>
+            ))}
+          </Select>
 
-        <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden />}
-          {expanded ? "Fit panel" : "Expand"}
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setExpanded((v) => !v);
+              // The panel just changed height: re-apply the last framing intent
+              // at the new size. The bump is deferred two frames so the panel's
+              // layout and the canvas's ResizeObserver have both landed first --
+              // otherwise the solver reads the OLD aspect and "re-solves" the
+              // distance the camera already has, which is not a reframe at all.
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => {
+                  if (framingIntent.current === "whole") setFitRequest((count) => count + 1);
+                  else setResetRequest((count) => count + 1);
+                }),
+              );
+            }}
+          >
+            {expanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden />}
+            {expanded ? "Fit panel" : "Expand"}
+          </Button>
+        </div>
       </div>
 
       {stats ? (
-        <details data-testid="city3d-stats" className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
-          <summary className="cursor-pointer text-[11px] text-ink-400">
-            Scene cost · {stats.drawCalls} draw calls · {stats.fps} fps
+        <details data-testid="city3d-stats" className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
+          {/* The strip itself: the numbers a reference dashboard shows at a
+              glance, always visible; the full breakdown stays one click away and
+              collapsed, so the page reads clean and the detail is still there. */}
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2 text-[11px] text-ink-300 select-none hover:text-ink-100">
+            <span className="flex items-center gap-2">
+              <span aria-hidden className="text-accent">▶</span>
+              <span>
+                Scene cost: {stats.meshes} meshes · Draw calls: {stats.drawCalls.toLocaleString("en-US")} ·{" "}
+                FPS: {stats.fps}
+              </span>
+            </span>
+            <span className="flex items-center gap-3 text-[10px] text-ink-500">
+              <span className="flex items-center gap-1.5">
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-mint" />
+                Live sync
+              </span>
+              <span aria-hidden className="hidden h-3 w-px bg-white/10 sm:block" />
+              <span className="hidden sm:inline">Last update: {timeAgo(graph?.generated_at)}</span>
+            </span>
           </summary>
           <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] sm:grid-cols-4">
             {[
@@ -232,7 +337,7 @@ export function TwinView({
 
       <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-navy-950">
         <City3D
-          graph={graph}
+          graph={visibleGraph}
           loading={loading}
           overlay={overlay}
           selectedId={selectedId}
@@ -244,23 +349,27 @@ export function TwinView({
           showScenery={showScenery}
           activeIncidents={activeIncidents}
           fitRequest={fitRequest}
+          resetRequest={resetRequest}
           onStats={setStats}
+          onToggleZones={() => setShowZones((value) => !value)}
+          onToggleEdges={() => setShowEdges((value) => !value)}
           quality={quality}
           mode={mode}
-          onModeChange={setMode}
+          onModeChange={applyMode}
           focusId={focusId}
           height={expanded ? Math.max(height, 720) : height}
+          overlaySlot={canvasOverlay}
         />
 
         {/* What kind of thing the overlay is, stated in words.
             A hypothetical cascade and a recorded one are the same geometry; only
             this badge distinguishes them, and confusing the two is the worst
-            mistake this view can make. Top-right so it never collides with the
-            status legend. */}
+            mistake this view can make. Top-centre so it clears both the tool
+            rail on the left and the compass stack on the right. */}
         {overlay?.scenario && overlay.scenario !== "live" ? (
           <div
             data-testid="city3d-scenario-badge"
-            className={`pointer-events-none absolute right-3 top-3 rounded-xl border px-3 py-2 backdrop-blur ${
+            className={`pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-xl border px-3 py-2 text-center backdrop-blur ${
               overlay.scenario === "hypothetical"
                 ? "border-amber/40 bg-amber/10"
                 : overlay.scenario === "historical"
@@ -314,15 +423,21 @@ export function TwinView({
 
       <p className="text-[11px] text-ink-500">
         Drag to rotate · right-drag (or two fingers) to pan · wheel or pinch to zoom · click a
-        building to inspect it. Move the whole city with the presets above.
+        building or a floating label to inspect it. The rail inside the viewport switches the left
+        drag between orbit and pan; the presets above move the whole city.
       </p>
+
+      {/* Metric cards, parked directly beneath the city the way the reference
+          dashboard composes them. Owned by the page: they read data this
+          component never sees. */}
+      {belowCanvas}
 
       {/* The asset strip predates the 3D view and stays: it is the fastest path to
           a known asset by keyboard, and the chips carry status as a dot as well as
           the text in the list below. */}
-      <AssetNavigator nodes={graph?.nodes ?? []} selected={selectedId} onSelect={select} />
+      <AssetNavigator nodes={visibleGraph?.nodes ?? []} selected={selectedId} onSelect={select} />
 
-      <AssetList graph={graph} selectedId={selectedId} onSelect={select} defaultOpen={listOpen} />
+      <AssetList graph={visibleGraph} selectedId={selectedId} onSelect={select} defaultOpen={listOpen} />
     </div>
   );
 }

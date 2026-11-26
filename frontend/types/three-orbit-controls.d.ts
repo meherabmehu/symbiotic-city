@@ -38,6 +38,13 @@ declare module "three/examples/jsm/controls/OrbitControls.js" {
     enableRotate: boolean;
     /** Touch: one finger rotates, two fingers dolly and pan. */
     touches: { ONE: number; TWO: number };
+    /**
+     * Which gesture each mouse button performs. The app rebinds `LEFT` between
+     * rotate and pan from the in-canvas tool rail; the values are `THREE.MOUSE`
+     * members (`ROTATE`, `PAN`), typed as numbers to keep this file's imports to
+     * the surface actually exercised.
+     */
+    mouseButtons: { LEFT?: number; MIDDLE?: number; RIGHT?: number };
 
     update(deltaTime?: number): boolean;
     /**
