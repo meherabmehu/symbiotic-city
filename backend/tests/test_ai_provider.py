@@ -17,7 +17,7 @@ from pydantic import SecretStr
 
 from app.core.config import settings
 from app.services.ai import SYSTEM_GUARD, untrusted
-from app.services.ai.provider import AiError, AiRateLimited, GroqProvider, get_provider, provider_label
+from app.services.ai.provider import AiError, AiRateLimited, AiTruncated, GroqProvider, get_provider, provider_label
 
 REPO = Path(__file__).resolve().parents[2]
 FRONTEND = REPO / "frontend"
@@ -52,6 +52,18 @@ def test_chat_posts_to_groq_with_bearer_and_model():
     assert captured["auth"] == "Bearer unit-test-key-not-real"
     assert captured["body"]["model"] == "m1"
     assert captured["body"]["messages"] == [{"role": "user", "content": "hi"}]
+    assert captured["body"]["max_completion_tokens"] == 700
+    assert "max_tokens" not in captured["body"]
+
+
+def test_length_finished_response_is_rejected_as_incomplete():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": "length", "message": {"content": "No resource is over-"}
+        }]})
+
+    with pytest.raises(AiTruncated, match="incomplete answer was discarded"):
+        asyncio.run(_provider(handler).chat([{"role": "user", "content": "hi"}]))
 
 
 def test_rate_limit_surfaces_retry_hint_and_never_retries():
