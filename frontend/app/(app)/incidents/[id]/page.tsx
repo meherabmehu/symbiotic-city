@@ -33,6 +33,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
+import { AiFeatureCard } from "@/components/ai/ai-feature-card";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime, formatNumber, timeAgo, titleCase } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
@@ -162,6 +163,16 @@ export default function IncidentDetailPage() {
 
       {error ? <Alert tone="danger" title="Action failed">{error}</Alert> : null}
       {notice ? <Alert tone="success" action={<Button variant="ghost" size="sm" onClick={() => setNotice(null)}>Dismiss</Button>}>{notice}</Alert> : null}
+
+      <div className="mt-4">
+        <AiFeatureCard
+          testId="incident-explain"
+          title="Incident explanation"
+          subtitle="What happened, which asset is involved, and the related repair work — read-only context pulled from the records."
+          endpoint={`/ai/incidents/${data.id}/explain`}
+          buttonLabel="Explain this incident"
+        />
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <div className="space-y-4">

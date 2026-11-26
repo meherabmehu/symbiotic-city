@@ -47,6 +47,7 @@ import { api, errorMessage, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime, formatNumber, percent, titleCase } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
+import { WhatIfExtract } from "@/components/ai/whatif-extract";
 import type { Asset, ListResponse, SimulationRun, SimulationRunDetail, TwinGraph } from "@/lib/types";
 
 interface Scenario {
@@ -229,6 +230,10 @@ function SimulationLab() {
           { id: "history", label: "Run history", count: runs.data?.total },
         ]}
       />
+
+      <div className="mt-4">
+        <WhatIfExtract onCreated={() => setRefreshKey((k) => k + 1)} />
+      </div>
 
       {/* grid-cols-1 base: below xl the implicit auto track sized itself to the
           asset picker's nowrap rows and overflowed a phone viewport. */}

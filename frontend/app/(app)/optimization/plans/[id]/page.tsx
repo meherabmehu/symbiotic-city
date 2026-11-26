@@ -38,6 +38,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
+import { AiFeatureCard } from "@/components/ai/ai-feature-card";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime, formatNumber, percent } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
@@ -186,6 +187,16 @@ export default function PlanDetailPage() {
 
       {error ? <Alert tone="danger" title="Action failed">{error}</Alert> : null}
       {notice ? <Alert tone="success" title="Done">{notice}</Alert> : null}
+
+      <div className="mt-4">
+        <AiFeatureCard
+          testId="plan-explain"
+          title="Recovery Advisor"
+          subtitle="Narration of this stored plan — status, objective, coverage and assignments. The advisor never re-runs the solver."
+          endpoint={`/ai/plans/${data.id}/explain`}
+          buttonLabel="Explain this plan"
+        />
+      </div>
       {compensated ? (
         <Alert
           tone="danger"
