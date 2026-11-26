@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 
 from app.api.routes import (
     admin,
+    ai,
     analytics,
     auth,
     incidents,
@@ -127,6 +128,7 @@ def create_app() -> FastAPI:
         analytics.router,
         admin.router,
         resilience.router,
+        ai.router,
     ):
         app.include_router(router, prefix=settings.api_prefix)
 
