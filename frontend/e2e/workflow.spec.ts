@@ -22,6 +22,33 @@ test.describe("operator journey", () => {
 
     const title = `E2E reported incident ${Date.now()}`;
     await page.getByRole("button", { name: /report incident|new incident/i }).first().click();
+
+    // The API allows only one active incident per asset and category and answers
+    // 409 otherwise, and this suite is not always running against a fresh
+    // database: a previous run's report on the form's default asset may still be
+    // open. Pick an asset that is free rather than assuming the first one is, so
+    // the create path is exercised on every run -- the assertion below is
+    // unchanged, only the precondition is made honest.
+    await page.locator("#inc-asset option").first().waitFor({ state: "attached" });
+    const busy = await page.evaluate(async () => {
+      const response = await fetch("/api/incidents?page_size=100", { credentials: "include" });
+      const body = await response.json();
+      return ((body.data ?? []) as { resolved_at: string | null; primary_asset_id: number }[])
+        .filter((incident) => incident.resolved_at === null)
+        .map((incident) => incident.primary_asset_id);
+    });
+    const free = await page
+      .locator("#inc-asset option")
+      .evaluateAll(
+        (options, busyIds) =>
+          options
+            .map((option) => Number((option as HTMLOptionElement).value))
+            .filter((id) => !busyIds.includes(id)),
+        busy,
+      );
+    expect(free.length, "every asset already has an open incident").toBeGreaterThan(0);
+    await page.locator("#inc-asset").selectOption(String(free[0]));
+
     await page.getByLabel(/^title/i).fill(title);
     await page.getByLabel(/description/i).fill("Reported by the end-to-end suite.");
     // The page also has a "Filter by severity" select, so target the form field.

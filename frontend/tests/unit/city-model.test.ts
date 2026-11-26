@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CITY_BOUNDS,
   CITY_EXTENT,
+  type CityBounds,
   MAP_SCALE,
   STATUS_STYLES,
   buildCityModel,
@@ -11,8 +12,10 @@ import {
   cameraPose,
   cascadeDepths,
   clampTarget,
+  fillPose,
   fitPose,
   focusPose,
+  projectedSpan,
   incidentPose,
   placeAssets,
   resolveVisualStatus,
@@ -444,9 +447,22 @@ describe("camera", () => {
       const pose = cameraPose(mode);
       expect(pose.position).toHaveLength(3);
       expect(pose.target).toEqual([0, 0, 0]);
-      // A camera inside the city would render the inside of a building.
+      // Every preset direction must sit inside the range OrbitControls will
+      // allow, or the controls clamp the camera somewhere the framing solver
+      // never optimised -- the projection on screen would not be the one the
+      // solver proved correct.
+      const polar = Math.atan2(
+        Math.hypot(pose.position[0], pose.position[2]),
+        Math.abs(pose.position[1]),
+      );
+      expect(polar, `${mode} polar`).toBeGreaterThanOrEqual(CITY_BOUNDS.minPolarAngle - 1e-9);
+      expect(polar, `${mode} polar`).toBeLessThanOrEqual(CITY_BOUNDS.maxPolarAngle + 1e-9);
+      // A camera inside the city would render the inside of a building: every
+      // preset sits outside the model's half-diagonal (~1.41 * CITY_EXTENT).
+      // Anchored to the city's own scale rather than to maxDistance, which is a
+      // framing budget and may move independently of where presets sit.
       const distance = Math.hypot(...pose.position);
-      expect(distance).toBeGreaterThan(CITY_BOUNDS.maxDistance * 0.3);
+      expect(distance).toBeGreaterThan(CITY_EXTENT * 1.5);
     }
   });
 
@@ -538,13 +554,16 @@ describe("camera framing", () => {
 
   it("keeps the preset's viewing direction when fitting", () => {
     const top = fitPose("top", 1.6);
-    // Top-down means looking straight down: x and z must stay near zero relative to
-    // the height, or "fit" would quietly turn into an isometric view.
+    // Top-down means looking straight down: x and z must stay near zero relative
+    // to the height, or "fit" would quietly turn into an isometric view. The
+    // threshold is the controls' own minPolarAngle -- the preset leans by
+    // exactly that much (see cameraPose), and the fit preserves the lean.
     const height = Math.hypot(...top.position);
-    expect(Math.abs(top.position[1])).toBeCloseTo(height, 5);
-    // The preset itself leans by a thousandth of a unit so the up vector never
-    // becomes degenerate; the fit preserves that lean rather than removing it.
-    expect(Math.hypot(top.position[0], top.position[2]) / height).toBeLessThan(0.01);
+    const polar = Math.atan2(Math.hypot(top.position[0], top.position[2]), Math.abs(top.position[1]));
+    expect(polar).toBeCloseTo(CITY_BOUNDS.minPolarAngle, 5);
+    // Still unmistakably top-down, nowhere near the 45-degree isometric lean.
+    expect(polar).toBeLessThan(0.2);
+    expect(height).toBeGreaterThan(CITY_EXTENT);
   });
 
   it("clears the whole city at every aspect ratio", () => {
@@ -570,6 +589,67 @@ describe("camera framing", () => {
     // And it must still be looking at the incident.
     expect(incident.target[0]).toBeCloseTo(10, 5);
     expect(incident.target[2]).toBeCloseTo(-20, 5);
+  });
+});
+
+/* --------------------------------------------------- projected coverage */
+
+describe("projected viewport coverage", () => {
+  // The brief's target: the default shot spans ~85-95% of the viewport width.
+  // Measured on *projected bounds* (projectedSpan), never on distances or
+  // canvas size -- a tiny city in a correctly-sized canvas must fail these.
+  const desktopAspects = [0.9, 1.0, 1.17, 1.33, 1.6, 2.08, 2.4, 2.66];
+
+  it("the immersive opening shot spans 85-95% of the viewport width", () => {
+    for (const aspect of desktopAspects) {
+      const span = projectedSpan(fillPose("perspective", aspect, 42), aspect, 42);
+      const pct = span.width * 100;
+      expect(pct, `aspect ${aspect} width ${pct.toFixed(1)}%`).toBeGreaterThanOrEqual(85);
+      expect(pct, `aspect ${aspect} width ${pct.toFixed(1)}%`).toBeLessThanOrEqual(95);
+    }
+  });
+
+  it("keeps the far district inside the frame; only the near road may crop", () => {
+    for (const aspect of desktopAspects) {
+      const span = projectedSpan(fillPose("perspective", aspect, 42), aspect, 42);
+      expect(span.maxY, `aspect ${aspect} far edge`).toBeLessThanOrEqual(1);
+      // FILL_NEAR is the budget for the near boundary hanging past the bottom.
+      expect(span.minY, `aspect ${aspect} near edge`).toBeGreaterThan(-2.85);
+    }
+  });
+
+  it("fit entire city contains every corner of the city bounds", () => {
+    for (const aspect of [0.5, 0.9, 1.33, 2.08, 3.0]) {
+      const span = projectedSpan(fitPose("perspective", aspect, 42), aspect, 42);
+      expect(Math.max(Math.abs(span.minY), span.maxY), `aspect ${aspect}`).toBeLessThanOrEqual(0.95);
+      expect(span.width, `aspect ${aspect}`).toBeLessThanOrEqual(0.95);
+      expect(span.height, `aspect ${aspect}`).toBeLessThanOrEqual(0.95);
+    }
+  });
+
+  it("the immersive shot and the whole-city fit are deliberately different framings", () => {
+    for (const aspect of desktopAspects) {
+      const immersive = Math.hypot(...fillPose("perspective", aspect).position);
+      const entire = Math.hypot(...fitPose("perspective", aspect).position);
+      expect(immersive, `aspect ${aspect}`).toBeLessThan(entire);
+    }
+  });
+
+  it("solves against explicit bounds when the scene differs from the analytic box", () => {
+    // A rendered scene whose content extends past the analytic city box must
+    // frame *that* box -- otherwise "fit" crops the very content the probe
+    // reports as on screen.
+    const wider: CityBounds = {
+      min: [-140, 0, -140],
+      max: [140, 24, 140],
+    };
+    const pose = fitPose("perspective", 1.6, 42, wider);
+    const span = projectedSpan(pose, 1.6, 42, wider);
+    expect(span.width).toBeLessThanOrEqual(0.95);
+    expect(Math.max(Math.abs(span.minY), span.maxY)).toBeLessThanOrEqual(0.95);
+    // The wider content needs a longer reach than the analytic box does.
+    const analytic = fitPose("perspective", 1.6, 42);
+    expect(Math.hypot(...pose.position)).toBeGreaterThan(Math.hypot(...analytic.position));
   });
 });
 

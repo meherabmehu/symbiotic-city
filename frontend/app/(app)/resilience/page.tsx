@@ -1,5 +1,7 @@
 "use client";
 
+import { criticalityStats } from "@/lib/criticality";
+
 /**
  * Screen 14 — Resilience intelligence.
  *
@@ -52,6 +54,7 @@ import {
 } from "@/components/ui";
 import { ZoneRiskMap, bandToken, type HeatAsset, type HeatZone } from "@/components/zone-risk-map";
 import { api, errorMessage, qs } from "@/lib/api";
+import { AiFeatureCard } from "@/components/ai/ai-feature-card";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime, formatNumber, percent, titleCase } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
@@ -453,9 +456,9 @@ function ExposureTab({ canPlan }: { canPlan: boolean }) {
                   ))}
                 </ol>
                 <p className="mt-2 text-[10px] text-ink-500">
-                  {criticality.data.fleet.assets_scored} assets scored · mean{" "}
-                  {criticality.data.fleet.mean_index.toFixed(1)} · peak{" "}
-                  {criticality.data.fleet.max_index.toFixed(1)}
+                  {criticalityStats(criticality.data).scored} assets scored · mean{" "}
+                  {criticalityStats(criticality.data).mean.toFixed(1)} · peak{" "}
+                  {criticalityStats(criticality.data).peak.toFixed(1)}
                   {canPlan ? "" : " · read-only view"}
                 </p>
                 <Assumptions items={criticality.data.model.assumptions} title="Criticality model" />
@@ -1385,6 +1388,16 @@ export default function ResiliencePage() {
           </>
         }
       />
+
+      <div className="mt-4">
+        <AiFeatureCard
+          testId="resilience-report"
+          title="Resilience report"
+          subtitle="A short situational brief from the platform's own figures — exposure, failures, tasks and the criticality index. Provider-labelled, no invented numbers."
+          endpoint="/ai/resilience/report"
+          buttonLabel="Generate report"
+        />
+      </div>
 
       <Tabs
         value={tab}

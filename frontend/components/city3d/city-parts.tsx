@@ -35,10 +35,14 @@ import {
 export function Ground({ reducedTexture = false }: { reducedTexture?: boolean }) {
   return (
     <group>
-      {/* The base plate. Slightly larger than the city so the edge is not visible
-          from the default camera. */}
+      {/* The base plate. Sized so its edge stays outside the frame not just from
+          the default shot but from a whole-city fit at the widest desktop aspect
+          too (fit pulls back to ~325u with a half-frame of ~235u on the ground):
+          a visible plate edge against the sky reads as a hole in the world. The
+          plate is skipped by the coverage probe and the framing solver -- it is
+          scenery, not content -- so growing it does not change what "fit" means. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <planeGeometry args={[CITY_EXTENT * 2.6, CITY_EXTENT * 2.6]} />
+        <planeGeometry args={[CITY_EXTENT * 5.5, CITY_EXTENT * 5.5]} />
         <meshStandardMaterial color="#0a1424" roughness={0.95} metalness={0.05} />
       </mesh>
 
@@ -647,13 +651,18 @@ export function ZoneDiscs({
         const selected = selectedZone === hull.zone.code;
         return (
           <group key={hull.zone.code} position={[hull.position.x, 0, hull.position.z]}>
+            {/* Kept faint by default: the discs are orientation, not content.
+                With no heat layer on they should read as a soft district
+                boundary under the city, not as five bright circles sitting on
+                top of it. A selected zone -- or one carrying a heat reading --
+                comes forward, because then the disc *is* the data. */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} onClick={() => onSelect?.(hull.zone.code)}>
               <circleGeometry args={[hull.radius, 48]} />
-              <meshBasicMaterial color={color} transparent opacity={selected ? 0.2 : 0.09} />
+              <meshBasicMaterial color={color} transparent opacity={selected || reading ? 0.16 : 0.045} />
             </mesh>
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
               <ringGeometry args={[hull.radius - 0.6, hull.radius, 64]} />
-              <meshBasicMaterial color={color} transparent opacity={selected ? 0.9 : 0.45} />
+              <meshBasicMaterial color={color} transparent opacity={selected ? 0.9 : reading ? 0.55 : 0.28} />
             </mesh>
           </group>
         );
