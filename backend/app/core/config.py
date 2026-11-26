@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -42,6 +42,16 @@ class Settings(BaseSettings):
 
     # --- demo data ----------------------------------------------------------
     seed_demo_data: bool = True
+
+    # --- Groq AI (server-side only) ----------------------------------------
+    # Read exclusively by backend code. The browser never receives these: there
+    # is no NEXT_PUBLIC_ variant and no route that echoes them back. SecretStr
+    # masks the key anywhere settings are repr'd or logged. Empty/absent key =
+    # AI features run their clearly-labelled rule-based fallbacks.
+    groq_api_key: SecretStr | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_timeout_seconds: float = 20.0
 
     # --- misc ---------------------------------------------------------------
     auth_rate_limit_per_minute: int = 30
