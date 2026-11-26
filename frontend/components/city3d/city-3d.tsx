@@ -188,6 +188,12 @@ export interface City3DProps {
    * panel. A counter, not a boolean, so pressing it twice reframes twice.
    */
   resetRequest?: number;
+  /**
+   * Extra DOM rendered inside the canvas box (sibling of the rail, compass and
+   * labels), so a caller can float panels over the *viewport* at stable
+   * canvas-relative anchors instead of guessing where the control rows end.
+   */
+  overlaySlot?: React.ReactNode;
   /** Receives measured scene statistics roughly twice a second, when supplied. */
   onStats?: (stats: SceneStats) => void;
   /**
@@ -238,6 +244,7 @@ export function City3D(props: City3DProps) {
     focusIncidentId = null,
     fitRequest = 0,
     resetRequest = 0,
+    overlaySlot,
     onStats,
     onToggleZones,
     onToggleEdges,
@@ -781,6 +788,10 @@ export function City3D(props: City3DProps) {
             style={{ width: 120 }}
           />
         </div>
+
+        {/* Caller-owned floating panels (the dashboard's status readouts): over
+            the canvas, stacked above the landmark labels. */}
+        {overlaySlot}
 
         {/* Floating landmark labels. Positioned by OverlayReporter each frame;
             hidden below sm where they would crowd the canvas. */}
