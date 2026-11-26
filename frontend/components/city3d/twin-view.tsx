@@ -63,6 +63,8 @@ export interface TwinViewProps {
    * owns the data those cards read.
    */
   belowCanvas?: ReactNode;
+  /** Rendered inside the canvas box -- see City3DProps.overlaySlot. */
+  canvasOverlay?: ReactNode;
 }
 
 export function TwinView({
@@ -76,6 +78,7 @@ export function TwinView({
   height = 560,
   activeIncidents = 0,
   belowCanvas,
+  canvasOverlay,
 }: TwinViewProps) {
   const [quality, setQuality] = useState<Quality>("balanced");
   const [mode, setMode] = useState<CameraMode>("perspective");
@@ -355,6 +358,7 @@ export function TwinView({
           onModeChange={applyMode}
           focusId={focusId}
           height={expanded ? Math.max(height, 720) : height}
+          overlaySlot={canvasOverlay}
         />
 
         {/* What kind of thing the overlay is, stated in words.

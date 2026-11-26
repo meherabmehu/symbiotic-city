@@ -197,6 +197,27 @@ body {
   }
 }
 
+/* Dashboard notification marquee: a slow linear crawl, paused on hover so a
+   headline can be read, duplicated content for a seamless loop (the strip
+   translates -50% across both copies). The reduced-motion block below kills
+   it for users who ask for that. */
+@keyframes city-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-ticker {
+  animation: city-ticker 48s linear infinite;
+}
+
+.group:hover .animate-ticker {
+  animation-play-state: paused;
+}
+
 /* Respect reduced motion preferences. */
 @media (prefers-reduced-motion: reduce) {
   *,
