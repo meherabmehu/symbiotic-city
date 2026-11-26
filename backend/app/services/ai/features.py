@@ -34,6 +34,87 @@ def citation(entity_type: str, entity_id: Any, label: str, snippet: str = "") ->
     }
 
 
+# ------------------------------------------------------- grounded terminology
+
+# The simulation engine owns these thresholds (app.simulation.engine.severity_label).
+# They are restated here only so a prompt can quote them verbatim instead of a
+# model inventing a band. Keep them in step with that function -- the test suite
+# asserts the two agree at every boundary.
+SEVERITY_BAND_TEXT = "critical >= 75, high >= 50, medium >= 25, low < 25"
+
+SIMULATION_DEFINITIONS = {
+    "initially_injected_asset_codes": (
+        "the assets the operator hypothesised as failing; inputs, not results"
+    ),
+    "downstream_cascading_failure_codes": (
+        "assets the engine propagated to FAILED from those inputs"
+    ),
+    "total_failed_assets": "every asset the engine marked failed, inputs included",
+    "operational_but_impacted_assets": (
+        "assets the engine marked degraded or affected; they are NOT failed"
+    ),
+    "total_impacted_assets_including_failures": (
+        "assets_impacted from the engine: failures plus degraded/affected, so this "
+        "already contains total_failed_assets"
+    ),
+    "critical_services_down": "codes of failed assets in core critical categories",
+    "asset_codes": "identifiers, never failure categories or failure modes",
+    "failure_mode": "one of total_failure, capacity_loss, maintenance",
+}
+
+
+def severity_band(score: Any) -> dict[str, Any]:
+    """The platform's own severity band for a computed severity index.
+
+    A single source of truth: ``app.simulation.engine.severity_label``. The AI
+    features may quote a band because the platform computed it; they may never
+    derive one themselves.
+    """
+    from app.simulation.engine import severity_label
+
+    try:
+        value = float(score or 0.0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return {
+        "index": value,
+        "band": severity_label(value),
+        "thresholds": SEVERITY_BAND_TEXT,
+        "source": "app.simulation.engine.severity_label",
+    }
+
+
+def solver_status_meaning(status: str) -> str:
+    """What CP-SAT's saved status does and does not establish.
+
+    'feasible' is emphatically not 'optimal': a feasible solution satisfies
+    every encoded constraint, while optimal means the solver proved no better
+    objective value exists inside that model.
+    """
+    normalised = (status or "").strip().lower()
+    if normalised == "optimal":
+        return (
+            "The solver proved this saved solution optimal for the encoded model. "
+            "Optimal is still model-relative: it says nothing about reality beyond "
+            "the constraints that were encoded."
+        )
+    if normalised == "feasible":
+        return (
+            "The solver proved this saved solution FEASIBLE only: it satisfies every "
+            "encoded constraint, but global optimality was NOT proven and a better "
+            "solution may exist within the same model."
+        )
+    if normalised == "infeasible":
+        return (
+            "The solver proved the encoded model INFEASIBLE: no assignment satisfies "
+            "all encoded constraints, so no plan exists under them."
+        )
+    return (
+        f"The stored solver status is '{status}', which does not establish optimality; "
+        "describe only what the saved record contains."
+    )
+
+
 # ------------------------------------------------------------- context fences
 
 
@@ -45,35 +126,49 @@ def fenced_block(title: str, rows: Iterable[Mapping[str, Any]]) -> str:
 # --------------------------------------------------------- rule-based fallbacks
 
 
-def copilot_fallback(lang: str, citations: list[dict], has_matches: bool) -> str:
-    """What the copilot says when no LLM is configured: retrieval still works,
-    the answer is honestly a pointer to it, not a simulated model reply."""
+def copilot_fallback(
+    lang: str,
+    citations: list[dict],
+    has_matches: bool,
+    reason: str = "no LLM key is configured",
+) -> str:
+    """What the copilot says when no model phrased the answer: retrieval still
+    works, the answer is honestly a pointer to it, not a simulated model reply.
+
+    ``reason`` states why the deterministic path ran, so a discarded or failed
+    model answer never masquerades as "no key configured".
+    """
     if lang == "bn":
         if not has_matches:
             return (
                 "এই প্রশ্নের সাথে মেলে এমন রেকর্ড পাওয়া যায়নি। সম্পাদক বা সম্পদের "
-                "কোড দিয়ে আবার চেষ্টা করুন। (নিয়মভিত্তিক উত্তর — LLM কী কনফিগার করা নেই।)"
+                f"কোড দিয়ে আবার চেষ্টা করুন। (নিয়মভিত্তিক উত্তর — {reason}।)"
             )
-        listed = "؛ ".join(c["label"] for c in citations[:5])
+        listed = "، ".join(c["label"] for c in citations[:5])
         return (
             f"আপনার প্রশ্নের সাথে মিলে এমন রেকর্ড পাওয়া গেছে: {listed}। "
             "বিস্তারিত দেখতে উদ্ধৃত সত্তাগুলো খুলুন। "
-            "(নিয়মভিত্তিক উত্তর — LLM কী কনফিগার করা নেই।)"
+            f"(নিয়মভিত্তিক উত্তর — {reason}।)"
         )
     if not has_matches:
         return (
             "I could not find records matching that question. Try naming an "
             "asset code (for example PS-01) or an incident reference. "
-            "(Rule-based response -- no LLM key is configured.)"
+            f"(Rule-based response -- {reason}.)"
         )
     listed = ", ".join(c["label"] for c in citations[:5])
     return (
         f"Records matching your question: {listed}. Open the cited entities for "
-        "full detail. (Rule-based response -- no LLM key is configured.)"
+        f"full detail. (Rule-based response -- {reason}.)"
     )
 
 
-def incident_fallback(lang: str, incident: Mapping[str, Any], asset_label: str) -> str:
+def incident_fallback(
+    lang: str,
+    incident: Mapping[str, Any],
+    asset_label: str,
+    reason: str = "no LLM key is configured",
+) -> str:
     status = incident.get("status", "unknown")
     severity = incident.get("severity", "unknown")
     category = incident.get("category", "unknown")
@@ -82,46 +177,60 @@ def incident_fallback(lang: str, incident: Mapping[str, Any], asset_label: str) 
             f"নিয়মভিত্তিক ব্যাখ্যা: {asset_label} — {category} বিভাগে "
             f"{severity} তীব্রতার ঘটনা, বর্তমান অবস্থা {status}। "
             "প্রথমে ঘটনার কারণ যাচাই করুন, তারপর সংযুক্ত সম্পদের অবস্থা দেখুন এবং "
-            "প্রয়োজনে মেরামত টাস্ক খুলুন। (LLM কী কনফিগার করা নেই।)"
+            f"প্রয়োজনে মেরামত টাস্ক খুলুন। (নিয়মভিত্তিক — {reason}।)"
         )
     return (
         f"Rule-based explanation: a {severity} {category} incident on {asset_label} "
         f"is currently '{status}'. Verify the triggering signal, check the asset's "
         "dependencies, and open a repair task if the asset stays degraded. "
-        "(No LLM key is configured.)"
+        f"(Rule-based -- {reason}.)"
     )
 
 
-def plan_fallback(plan: Mapping[str, Any]) -> str:
-    status = plan.get("solution_status", "unknown")
+def plan_fallback(plan: Mapping[str, Any], reason: str = "no LLM key is configured") -> str:
+    status = str(plan.get("solution_status", "unknown"))
     covered = plan.get("covered_demand", 0)
     total = plan.get("total_demand", 0)
     objective = plan.get("objective_value", 0)
     assignments = plan.get("assignments") or []
+    explanation = plan.get("explanation") or {}
+    constraints = explanation.get("constraints") or {}
     lines = [
         f"Rule-based read-out of solver plan {plan.get('code', '?')}:",
         f"- Solver status: {status}.",
+        f"- {solver_status_meaning(status)}",
         f"- Coverage: {covered} of {total} demand units ({plan.get('coverage_percent', 0)}%).",
-        f"- Objective value reported by CP-SAT: {objective}.",
+        f"- Objective value reported by CP-SAT: {objective}. It is a solver score for "
+        "the encoded model, not proof that a business objective was maximised.",
     ]
     if plan.get("infeasibility_reason"):
         lines.append(f"- Infeasibility reason: {plan['infeasibility_reason']}.")
+    if constraints:
+        recorded = ", ".join(f"{key}={value}" for key, value in constraints.items())
+        lines.append(f"- Encoded constraints recorded with the request: {recorded}.")
     if assignments:
-        lines.append(f"- {len(assignments)} assignments, first three:")
-        for item in assignments[:3]:
+        lines.append(f"- All {len(assignments)} saved assignments:")
+        for item in assignments:
             lines.append(
-                f"  asset {item.get('asset_id')} <- resource {item.get('resource_id')}"
+                f"  {item.get('asset_code', item.get('asset_id'))} — "
+                f"{item.get('asset_name', 'asset')} receives {item.get('quantity')} from "
+                f"{item.get('resource_code', item.get('resource_id'))} — "
+                f"{item.get('resource_name', 'resource')}."
             )
     lines.append(
-        "The solver's own answer stands; this text only narrates it. "
-        "(No LLM key is configured.)"
+        "The solver's own answer stands; this text only narrates the saved record. "
+        f"(Rule-based -- {reason}.)"
     )
     return "\n".join(lines)
 
 
-def report_fallback(stats: Mapping[str, Any]) -> str:
+def report_fallback(stats: Mapping[str, Any], reason: str = "no LLM key is configured") -> str:
     """The resilience report's deterministic body -- same figures the API
-    computed, phrased once. The LLM path may rephrase but may not recompute."""
+    computed, phrased once. The LLM path may rephrase but may not recompute.
+
+    Incident claims come only from ``active_incident_records``; criticality
+    ranks are printed as ranks and explicitly not as incidents.
+    """
     critical = stats.get("criticality", {})
     lines = [
         "SYMBIOTIC CITY — Resilience report (rule-based)",
@@ -136,11 +245,25 @@ def report_fallback(stats: Mapping[str, Any]) -> str:
             f"Critical assets (priority scoring): {critical['critical_assets']} "
             f"of {critical.get('total', 0)} scored."
         )
+    incidents = stats.get("active_incident_records", [])
+    if incidents:
+        lines.append("Current incidents (recorded, status not resolved/closed):")
+        for row in incidents:
+            lines.append(
+                f"- {row['code']} — {row['title']} · primary asset "
+                f"{row['primary_asset_code']} — {row['primary_asset_name']} "
+                f"({row['status']})."
+            )
+    else:
+        lines.append("Current incidents: none recorded.")
     for row in stats.get("top_risks", [])[:3]:
-        lines.append(f"- Top risk: {row['label']} — {row['reason']}")
+        lines.append(
+            f"- Criticality ranking #{row.get('rank', '?')}: {row['label']} — "
+            f"{row['reason']}. This is a ranking only, not an incident claim."
+        )
     lines.append(
-        "Figures are computed by the platform; wording here is rule-based and "
-        "labelled as such (no LLM key is configured)."
+        "Figures are computed by the platform; this wording is rule-based "
+        f"(rule-based -- {reason})."
     )
     return "\n".join(lines)
 

@@ -21,10 +21,12 @@ Shared contract for every endpoint here:
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import deque
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, or_, select
@@ -43,7 +45,7 @@ from app.schemas.ai import (
 )
 from app.services.ai import SYSTEM_GUARD, get_provider, provider_label, untrusted
 from app.services.ai import features as ai_features
-from app.services.ai.provider import AiError, AiReply
+from app.services.ai.provider import AiError, AiReply, AiTruncated
 
 logger = logging.getLogger("symbiotic.ai")
 
@@ -78,24 +80,101 @@ def _rate_limit(user_id: int) -> None:
 # ----------------------------------------------------------------- LLM seam
 # get_provider is looked up on this module so tests can swap it in one place.
 
+# Shown next to a deterministic fallback when the reason is *not* "no key".
+# The provider label alone cannot say why the model was not used, and an
+# operator reading a fallback must be told what happened to the model answer.
+TRUNCATED_NOTICE = (
+    "The model hit its output-token limit, so its partial answer was discarded "
+    "rather than displayed as if it were complete. The text below is the "
+    "platform's complete, deterministic summary of the same records."
+)
+UNAVAILABLE_NOTICE = (
+    "The AI provider did not answer (error, timeout or rate limit), so the text "
+    "below is the platform's complete, deterministic summary of the same records."
+)
 
-async def _chat(messages: list[dict[str, str]], *, max_tokens: int = 700) -> tuple[str | None, str]:
-    """Call the provider; on any failure return (None, rule-based label).
 
-    Features never surface provider errors as feature errors -- they fall
-    back to the deterministic path and keep the honest label.
+@dataclass(frozen=True)
+class ChatOutcome:
+    """Result of one model attempt: text, honest label, and why it fell back.
+
+    ``text`` is None whenever the deterministic path must supply the answer.
+    ``truncated`` is what separates "the model was cut off" from "the model
+    was never asked" -- both must be visible, neither may be implied.
     """
+
+    text: str | None
+    label: str
+    truncated: bool = False
+    notice: str | None = None
+    finish_reason: str | None = None
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "provider": self.label,
+            "truncated": self.truncated,
+            "notice": self.notice,
+        }
+
+
+def fallback_reason(outcome: ChatOutcome) -> str:
+    """One phrase explaining *why* the deterministic text is the answer.
+
+    Never "no LLM key is configured" unless that is actually the reason.
+    """
+    if outcome.truncated:
+        return "the model's answer was cut off at its token limit and discarded"
+    if outcome.finish_reason == "grounding_rejected":
+        return "the model's draft failed grounding checks"
+    if outcome.finish_reason == "error":
+        return "the AI provider was unavailable"
+    return "no LLM key is configured"
+
+
+async def _chat(
+    messages: list[dict[str, str]], *, max_tokens: int = 700
+) -> ChatOutcome:
+    """Call the provider; never raise. Fall back with an honest, explicit reason."""
     provider = get_provider()
     if provider is None:
-        return None, provider_label(has_key=False)
+        return ChatOutcome(
+            text=None,
+            label=provider_label(has_key=False),
+            finish_reason="no_key",
+        )
     try:
         reply: AiReply = await provider.chat(messages, max_tokens=max_tokens)
-    except AiError:
-        return None, provider_label(has_key=False)
+    except AiTruncated:
+        logger.info("AI reply discarded mid-sentence: provider hit its token limit")
+        return ChatOutcome(
+            text=None,
+            label="rule-based (incomplete AI response discarded)",
+            truncated=True,
+            notice=TRUNCATED_NOTICE,
+            finish_reason="length",
+        )
+    except AiError as exc:
+        logger.info("AI reply unavailable (%s)", type(exc).__name__)
+        return ChatOutcome(
+            text=None,
+            label="rule-based (AI provider unavailable)",
+            notice=UNAVAILABLE_NOTICE,
+            finish_reason="error",
+        )
     except Exception:
         logger.exception("Unexpected error from AI provider")
-        return None, provider_label(has_key=False)
-    return reply.text, provider_label(has_key=True)
+        return ChatOutcome(
+            text=None,
+            label="rule-based (AI provider unavailable)",
+            notice=UNAVAILABLE_NOTICE,
+            finish_reason="error",
+        )
+    return ChatOutcome(
+        text=reply.text,
+        label=provider_label(has_key=True),
+        # A provider substitute (or a future provider) may not carry the field.
+        finish_reason=getattr(reply, "finish_reason", None) or "stop",
+    )
 
 
 def _messages(system_extra: str, user_block: str) -> list[dict[str, str]]:
@@ -259,16 +338,23 @@ async def copilot(
     else:
         user_block = f"Operator question:\n{payload.message}"
 
-    reply_text, label = await _chat(_messages(system, user_block), max_tokens=500)
+    outcome = await _chat(
+        _messages(system + " Keep the answer complete and under 350 words.", user_block),
+        max_tokens=650,
+    )
+    reply_text = outcome.text
     if reply_text is None:
         reply_text = ai_features.copilot_fallback(
-            payload.lang, citations, has_matches=bool(citations)
+            payload.lang,
+            citations,
+            has_matches=bool(citations),
+            reason=fallback_reason(outcome),
         )
     return ok(
         {
             "reply": reply_text,
             "lang": payload.lang,
-            "provider": label,
+            **outcome.payload(),
             "citations": citations,
         }
     )
@@ -324,9 +410,15 @@ async def explain_incident(
         "what happened, what it affects, what is already being done, and what to "
         "check next. Use only the records provided."
     )
-    reply_text, label = await _chat(_messages(system, context), max_tokens=600)
+    outcome = await _chat(
+        _messages(system + " Keep the answer complete and under 450 words.", context),
+        max_tokens=850,
+    )
+    reply_text = outcome.text
     if reply_text is None:
-        reply_text = ai_features.incident_fallback(payload.lang, incident_row, asset_label)
+        reply_text = ai_features.incident_fallback(
+            payload.lang, incident_row, asset_label, reason=fallback_reason(outcome)
+        )
 
     citations = [ai_features.citation("incident", incident.id, f"{incident.code} {incident.title}")]
     if asset:
@@ -334,7 +426,7 @@ async def explain_incident(
     for task in open_tasks:
         citations.append(ai_features.citation("task", task.id, f"{task.code} {task.title}"))
     return ok(
-        {"reply": reply_text, "lang": payload.lang, "provider": label, "citations": citations}
+        {"reply": reply_text, "lang": payload.lang, **outcome.payload(), "citations": citations}
     )
 
 
@@ -359,36 +451,62 @@ async def explain_plan(
     from app.services import optimization as opt_service
 
     plan_dict = opt_service.plan_to_dict(db, plan, detail=True)
-    context = ai_features.fenced_block("solver plan", [plan_dict])
+    explanation = plan_dict.get("explanation") or {}
+    status = str(plan.solution_status or "unknown")
+    status_meaning = ai_features.solver_status_meaning(status)
+    advisor_context = {
+        "plan": plan_dict,
+        "solver_reading": {
+            "solution_status": status,
+            "status_meaning": status_meaning,
+            "objective_value": plan.objective_value,
+            "objective_value_is_a_solver_score_not_a_business_proof": True,
+        },
+        # Exactly the constraints the request was encoded with -- the only
+        # bounds this endpoint can honestly talk about.
+        "recorded_constraints": explanation.get("constraints") or {},
+        "recorded_resource_usage": explanation.get("resource_usage") or {},
+        "unserved_demands": explanation.get("unserved") or [],
+    }
+    context = ai_features.fenced_block("solver plan", [advisor_context])
     system = (
         f"{_lang_instruction(payload.lang)} You are the recovery advisor. Explain the "
-        "CP-SAT plan: what the solver optimised, how good the answer is, where the "
-        "gaps are, and what an operator should confirm before approval. The solver's "
-        "numbers are authoritative -- never invent different ones, never present a "
-        "new solution as the plan."
+        "stored CP-SAT plan without rerunning or re-solving it. "
+        f"Solver status is '{status}': {status_meaning} "
+        "The objective value is a solver score; it is NOT proof that a business objective "
+        "was globally maximised. Only the keys inside recorded_constraints are real "
+        "constraints of this run -- never invent penalties, assignment caps, mobilisation "
+        "rules, horizon feasibility or solver bounds that are absent there. Report every "
+        "saved assignment and any coverage gap. Keep the answer complete and under 450 "
+        "words: prefer a short complete answer over a long truncated one."
     )
-    reply_text, label = await _chat(_messages(system, context), max_tokens=700)
+    outcome = await _chat(_messages(system, context), max_tokens=1200)
+    reply_text = outcome.text
     if reply_text is None:
-        reply_text = ai_features.plan_fallback(plan_dict)
+        reply_text = ai_features.plan_fallback(plan_dict, reason=fallback_reason(outcome))
 
     citations = [ai_features.citation("optimization_plan", plan.id, f"{plan.code} plan")]
-    for row in (plan_dict.get("assignments") or [])[:6]:
+    for occurrence, row in enumerate(plan_dict.get("assignments") or [], start=1):
         citations.append(
             ai_features.citation(
-                "asset", row.get("asset_id"), f"asset #{row.get('asset_id')} assignment",
-                f"resource #{row.get('resource_id')}",
+                "asset", row.get("asset_id"),
+                f"{row.get('asset_code')} — {row.get('asset_name')}",
+                f"assignment {occurrence}: {row.get('quantity')} from "
+                f"{row.get('resource_code')} — {row.get('resource_name')}",
             )
         )
     return ok(
         {
             "reply": reply_text,
             "lang": payload.lang,
-            "provider": label,
+            **outcome.payload(),
             "solver": {
-                "solution_status": plan.solution_status,
+                "solution_status": status,
+                "status_meaning": status_meaning,
                 "objective_value": plan.objective_value,
                 "coverage_percent": plan.coverage_percent,
                 "solver_wall_ms": plan.solver_wall_ms,
+                "recorded_constraints": advisor_context["recorded_constraints"],
             },
             "citations": citations,
         }
@@ -455,24 +573,65 @@ async def extract_whatif(
     import json as _json
 
     metrics = _json.loads(observation.metrics_json or "{}")
+    initial_assets = db.scalars(
+        select(Asset).where(Asset.id.in_(extracted["initial_failure_ids"]))
+    ).all()
+    code_by_id = {asset.id: asset.code for asset in initial_assets}
+    initial_codes = [code_by_id[asset_id] for asset_id in extracted["initial_failure_ids"]]
+    failed_codes = list(metrics.get("failed_codes") or [])
+    cascade_codes = [code for code in failed_codes if code not in set(initial_codes)]
+    band = ai_features.severity_band(metrics.get("severity_index", 0))
+    grounded_outcome = {
+        "initially_injected_asset_codes": initial_codes,
+        "downstream_cascading_failure_codes": cascade_codes,
+        "total_failed_assets": metrics.get("assets_failed", 0),
+        "operational_but_impacted_assets": (
+            metrics.get("assets_degraded", 0) + metrics.get("assets_affected", 0)
+        ),
+        "total_impacted_assets_including_failures": metrics.get("assets_impacted", 0),
+        "critical_services_down": metrics.get("critical_services_down", []),
+        "maximum_cascade_depth": metrics.get("max_depth_reached", 0),
+        "severity": band,
+        "failure_mode": extracted["failure_mode"],
+        # Definitions travel with the numbers so the model cannot redefine
+        # "failed", "impacted" or "cascade" to mean something the engine did.
+        "definitions": ai_features.SIMULATION_DEFINITIONS,
+    }
     system = (
-        f"{_lang_instruction(payload.lang)} Summarise what this what-if run showed: "
-        "the failures injected, the cascade outcome metrics, and how to read them. "
-        "Only use the numbers provided."
+        f"{_lang_instruction(payload.lang)} Summarise what this what-if run showed, in "
+        "short complete sections. Terms have exactly the definitions supplied in the "
+        "context: initially injected asset IDs are the hypothesis the operator typed; "
+        "downstream cascading failure codes are what the engine propagated from them; "
+        "total failed assets counts every asset the engine marked failed; operational "
+        "but impacted excludes failures. Asset codes are identifiers, never failure "
+        "categories or failure modes. The severity band is the platform's own computation "
+        "from the severity index -- quote it, never invent or re-derive it. Labelled "
+        "implications must read as model possibilities, not verified engineering facts. "
+        "Use only supplied facts. Keep the answer complete and under 350 words."
     )
     context = ai_features.fenced_block(
         "what-if observation",
-        [{"scenario": scenario.code, "metrics": metrics, "note": observation.note}],
+        [{"scenario": scenario.code, "outcome": grounded_outcome,
+          "model_parameters": {"cascade_threshold": extracted["cascade_threshold"],
+                               "max_depth": extracted["max_depth"],
+                               "random_seed": extracted["random_seed"]},
+          "note": observation.note}],
     )
-    reply_text, label = await _chat(_messages(system, context), max_tokens=500)
+    outcome = await _chat(_messages(system, context), max_tokens=900)
+    reply_text = outcome.text
     if reply_text is None:
         reply_text = (
             f"Rule-based summary: scenario {scenario.code} ran with "
-            f"{len(extracted['initial_failure_ids'])} injected failure(s), mode "
-            f"{extracted['failure_mode']} at threshold {extracted['cascade_threshold']}. "
-            f"Headline: {observation.headline}. Metrics: "
-            f"{', '.join(f'{k}={v}' for k, v in list(metrics.items())[:6])}. "
-            "(No LLM key is configured.)"
+            f"initially injected assets {', '.join(initial_codes)} in "
+            f"{extracted['failure_mode']} mode. Downstream cascading failures: "
+            f"{', '.join(cascade_codes) if cascade_codes else 'none'}. "
+            f"Total failed assets: {grounded_outcome['total_failed_assets']}; "
+            f"operational but impacted: {grounded_outcome['operational_but_impacted_assets']}; "
+            f"critical services down: {len(grounded_outcome['critical_services_down'])}; "
+            f"maximum cascade depth: {grounded_outcome['maximum_cascade_depth']}; "
+            f"severity index {band['index']} which the platform maps to band "
+            f"'{band['band']}' (thresholds {ai_features.SEVERITY_BAND_TEXT}). "
+            f"(Rule-based -- {fallback_reason(outcome)}.)"
         )
 
     return ok(
@@ -482,7 +641,8 @@ async def extract_whatif(
             "observation": {"id": observation.id, "run_id": observation.run_id,
                             "headline": observation.headline, "metrics": metrics},
             "reply": reply_text,
-            "provider": label,
+            **outcome.payload(),
+            "severity": band,
         }
     )
 
@@ -516,7 +676,9 @@ async def _extract(text: str, db) -> tuple[dict[str, Any], str]:
 
 def _merge_extracted(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     floor = ai_features.extract_rule_based(text)
-    codes = parsed.get("failure_codes") or floor["failure_codes"]
+    # Explicit codes in the operator's sentence are authoritative. A model may
+    # normalise other fields, but may not silently substitute the assets to run.
+    codes = floor["failure_codes"] or parsed.get("failure_codes") or []
     if not isinstance(codes, list):
         codes = floor["failure_codes"]
     mode = parsed.get("failure_mode")
@@ -596,13 +758,60 @@ async def resilience_report(
     system = (
         f"{_lang_instruction(payload.lang)} Write the narrative sections of a "
         "resilience report (overview, hotspots, recommended focus) using ONLY the "
-        "figures provided. Do not invent numbers."
+        "figures provided. active_incident_records is the ONLY authority for current "
+        "incidents and for which asset each one is actually on. top_risks is a "
+        "criticality ranking of infrastructure: never evidence of an incident, a "
+        "recorded failure or a simulated failure, and an asset can rank highly with no "
+        "incident at all. Never state or imply that an asset has an active incident "
+        "unless a record in active_incident_records names it as the primary asset. The "
+        "payload contains no simulated results; do not describe any. Quote computed "
+        "figures, invent nothing. Keep the report complete and under 500 words: a short "
+        "complete report beats a truncated one."
     )
     context = ai_features.fenced_block("computed report figures", [stats])
-    reply_text, label = await _chat(_messages(system, context), max_tokens=800)
+    outcome = await _chat(_messages(system, context), max_tokens=1200)
+    reply_text = outcome.text
+    grounding: dict[str, Any] = {"checked": False, "problems": []}
+    if reply_text is not None:
+        problems = report_grounding_problems(reply_text, stats)
+        grounding = {"checked": True, "problems": problems}
+        if problems:
+            logger.warning("resilience report rejected as ungrounded: %s", problems)
+            outcome = ChatOutcome(
+                text=None,
+                label="rule-based (model answer failed grounding checks)",
+                notice=(
+                    "The model's draft attributed an incident to an asset that has no "
+                    "recorded incident, so the draft was rejected rather than shown. "
+                    "The text below is the platform's deterministic report."
+                ),
+                finish_reason="grounding_rejected",
+            )
+            reply_text = None
     if reply_text is None:
-        reply_text = ai_features.report_fallback(stats)
-    return ok({"report": reply_text, "stats": stats, "lang": payload.lang, "provider": label})
+        reply_text = ai_features.report_fallback(stats, reason=fallback_reason(outcome))
+    citations = [
+        ai_features.citation("incident", row["id"], f"{row['code']} — {row['title']}",
+                             f"primary asset {row['primary_asset_code']} — {row['primary_asset_name']}")
+        for row in stats.get("active_incident_records", [])
+    ]
+    citations.extend(
+        ai_features.citation(
+            "asset", row["asset_id"], row["label"],
+            f"{row['reason']} · criticality ranking only, no recorded incident",
+        )
+        for row in stats.get("top_risks", [])
+    )
+    return ok(
+        {
+            "report": reply_text,
+            "stats": stats,
+            "lang": payload.lang,
+            **outcome.payload(),
+            "citations": citations,
+            "grounding": grounding,
+        }
+    )
 
 
 def _report_stats(db) -> dict[str, Any]:
@@ -631,6 +840,19 @@ def _report_stats(db) -> dict[str, Any]:
         "incidents_reported_30d": reported_30d,
         "open_tasks": open_tasks,
     }
+    active_rows = db.execute(
+        select(Incident, Asset)
+        .join(Asset, Asset.id == Incident.primary_asset_id)
+        .where(Incident.status.notin_(["resolved", "closed", "cancelled"]))
+        .order_by(Incident.reported_at.desc())
+    ).all()
+    stats["active_incident_records"] = [
+        {"id": incident.id, "code": incident.code, "title": incident.title,
+         "status": incident.status, "severity": incident.severity,
+         "primary_asset_id": asset.id, "primary_asset_code": asset.code,
+         "primary_asset_name": asset.name}
+        for incident, asset in active_rows
+    ]
 
     try:
         from app.services import criticality as criticality_service
@@ -641,14 +863,87 @@ def _report_stats(db) -> dict[str, Any]:
             "total": fleet.get("total_dependencies", 0),
             "critical_assets": fleet.get("critical_assets", 0),
         }
+        active_codes = {
+            row["primary_asset_code"] for row in stats["active_incident_records"]
+        }
         stats["top_risks"] = [
-            {"label": f"{row['code']} {row['name']}",
-             "reason": f"criticality index {row['criticality_index']}"}
-            for row in index.get("ranking", [])[:3]
+            {
+                "rank": position,
+                "asset_id": row["asset_id"],
+                "code": row["code"],
+                "label": f"{row['code']} — {row['name']}",
+                "reason": f"criticality index {row['criticality_index']}",
+                # Explicit on the row itself: a criticality rank is not an
+                # incident, and this asset may or may not happen to have one.
+                "is_recorded_incident_asset": row["code"] in active_codes,
+                "claim": "criticality ranking only; not an incident claim",
+            }
+            for position, row in enumerate(index.get("ranking", [])[:3], start=1)
         ]
     except Exception:
         # An empty city (409 from analyse) or any stats hiccup degrades the
         # report's hotspot section -- never the request itself.
         stats["criticality"] = {}
         stats["top_risks"] = []
+    stats["definitions"] = {
+        "active_incident_records": (
+            "incidents whose status is not resolved/closed/cancelled, with the asset "
+            "recorded as their primary asset"
+        ),
+        "top_risks": "criticality ranking over dependencies; never an incident or failure",
+        "criticality": "priority scoring, not an operational status",
+        "recorded_failures": "only what appears in active_incident_records",
+        "simulated_results": "none included in this payload",
+    }
+    stats["assets_with_active_incidents"] = sorted(
+        {row["primary_asset_code"] for row in stats["active_incident_records"]}
+    )
     return stats
+
+
+# The wording an ungrounded report tends to use, and the wording that makes a
+# sentence an explicit *contrast* rather than a conflation.
+_INCIDENT_WORD_RE = re.compile(r"\bincidents?\b", re.IGNORECASE)
+_CONTRAST_RE = re.compile(
+    r"\b(no|not|none|never|without|while|whereas|although|though|but|versus|vs\.?|"
+    r"only|just|merely|solely|ranking|ranked|criticality|unrelated|distinct|"
+    r"separate|differ\w*|contrast\w*|distinguish\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def report_grounding_problems(text: str, stats: dict[str, Any]) -> list[str]:
+    """Reject the conflation actually observed in testing.
+
+    The model was given INC-0005 on SS-01 as the only live incident and PS-02 as
+    the top criticality rank, and it recommended sending resources to PS-02 "to
+    stabilise an active incident". Only ``active_incident_records`` may assert an
+    incident, so any sentence that pairs the word "incident" with a merely
+    ranked asset -- without contrasting wording -- is reported here and the
+    draft is discarded instead of shown.
+    """
+    active_codes = {
+        str(row.get("primary_asset_code") or "")
+        for row in stats.get("active_incident_records", [])
+    }
+    ranked_codes = set()
+    for row in stats.get("top_risks", []):
+        label = str(row.get("label") or row.get("code") or "")
+        code = label.split("—")[0].strip().split(" ")[0]
+        if code:
+            ranked_codes.add(code)
+    risky_only = ranked_codes - active_codes
+    if not risky_only:
+        return []
+
+    problems: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if not _INCIDENT_WORD_RE.search(sentence) or _CONTRAST_RE.search(sentence):
+            continue
+        named = set(re.findall(r"\b([A-Z]{2,4}-\d{2})\b", sentence))
+        for code in sorted(named & risky_only):
+            problems.append(
+                f"{code} is described alongside an incident but is only a criticality "
+                "ranking entry with no record in active_incident_records"
+            )
+    return problems

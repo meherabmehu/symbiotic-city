@@ -13,6 +13,7 @@ import pytest
 
 import app.api.routes.ai as ai_routes
 from app.services.ai import features as ai_features
+from app.services.ai.provider import AiReply, AiTruncated
 from tests.conftest import unique_category as _unique_category
 
 
@@ -22,6 +23,9 @@ class FakeProvider:
     This is ``async def`` just like the real provider, so a missing ``await``
     in the route will return a coroutine object instead of an AiReply and
     blow up with ``AttributeError: 'coroutine' has no attribute 'text'``.
+
+    The reply is a real :class:`AiReply`, so the route sees exactly the shape
+    the live provider returns -- including ``finish_reason``.
     """
 
     def __init__(self, reply_text: str) -> None:
@@ -30,7 +34,35 @@ class FakeProvider:
 
     async def chat(self, messages, *, temperature=0.2, max_tokens=700):
         self.calls.append(list(messages))
-        return SimpleNamespace(text=self.reply_text, model="fake-model", provider="groq")
+        return AiReply(
+            text=self.reply_text,
+            model="fake-model",
+            provider="groq",
+            finish_reason="stop",
+        )
+
+
+class TruncatingProvider(FakeProvider):
+    """Models the observed failure: finish_reason 'length' mid-sentence."""
+
+    async def chat(self, messages, *, temperature=0.2, max_tokens=700):
+        self.calls.append(list(messages))
+        raise AiTruncated(
+            "The AI provider reached its response limit; an incomplete answer was discarded",
+            partial_text="No resource is over-",
+            completion_tokens=max_tokens,
+            limit=max_tokens,
+        )
+
+
+class FailingProvider(FakeProvider):
+    """Models a provider outage (timeout, 5xx, bad credentials)."""
+
+    async def chat(self, messages, *, temperature=0.2, max_tokens=700):
+        self.calls.append(list(messages))
+        from app.services.ai.provider import AiError
+
+        raise AiError("Could not reach the AI provider")
 
 
 @pytest.fixture
@@ -340,6 +372,43 @@ def test_report_llm_path_labels_itself_and_gets_only_computed_figures(
     joined = "\n".join(m["content"] for call in provider.calls for m in call)
     assert "computed report figures" in joined
     assert '"assets_total"' in joined
+
+
+def test_resilience_report_separates_active_incident_from_criticality_rank(
+    city_operator, fake_llm
+):
+    provider = fake_llm("SS-01 has the recorded incident; PS-02 is only top-ranked.")
+    response = city_operator.post("/api/ai/resilience/report", json={"lang": "en"})
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    active = payload["stats"]["active_incident_records"]
+    incident = next(row for row in active if row["code"] == "INC-0005")
+    assert incident["primary_asset_code"] == "SS-01"
+    top = payload["stats"]["top_risks"][0]
+    assert top["label"].startswith("PS-02")
+    assert top["asset_id"] != incident["primary_asset_id"]
+    joined = "\n".join(m["content"] for call in provider.calls for m in call)
+    assert "active_incident_records" in joined
+    assert "top_risks is a criticality ranking" in joined
+
+
+def test_model_extracted_assets_cannot_replace_explicit_operator_codes():
+    merged = ai_routes._merge_extracted(
+        {"failure_codes": ["PS-01"], "failure_mode": "total_failure"},
+        "What happens if PS-02 and SS-02 fail simultaneously?",
+    )
+    assert merged["failure_codes"] == ["PS-02", "SS-02"]
+
+
+def test_plan_fallback_does_not_claim_feasible_is_globally_optimal():
+    text = ai_features.plan_fallback({
+        "code": "PLAN-0001", "solution_status": "feasible",
+        "covered_demand": 3, "total_demand": 3, "coverage_percent": 100,
+        "objective_value": 860900, "assignments": [],
+    })
+    assert "global optimality was not proven" in text.lower()
+    assert "globally optimal" not in text.lower()
+    assert "860900" in text
 
 
 # ----------------------------------------------------------------- read-only
