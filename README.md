@@ -49,6 +49,7 @@ SYMBIOTIC CITY answers three questions before the incident, and one after it:
 | **Workflow console** | The 10-step recovery pipeline, per-step events, fault injection, retry, and the compensation ledger. |
 | **Analytics** | Trends, category and severity breakdowns, resource utilisation, recovery performance, CSV export. |
 | **Admin** | Users and roles, permissions matrix, system settings, audit log. |
+| **AI Intelligence** | Five Groq-powered assistants (City Copilot, Incident Explanation, Recovery Advisor, What-If Extraction, Resilience Report) with deterministic rule-based fallbacks, citation links, and truncation/grounding guards. |
 
 ## Architecture at a glance
 
@@ -127,15 +128,16 @@ Demo accounts (synthetic, seeded on first boot):
 ## Verify it
 
 ```bash
-./scripts/verify.sh          # alembic up/down, 112 backend tests (SQLite), tsc, build
+./scripts/verify.sh          # alembic up/down, backend tests (SQLite), tsc, build
 ./scripts/verify.sh backend  # just the API surface
 python3 scripts/smoke.py     # live end-to-end flow against a running stack
 
 # Schema work must also be checked on PostgreSQL: SQLite does not validate
 # foreign keys while parsing DDL, so a broken revision looks green there.
-# Pointed at a real PostgreSQL 16 server the same suite reports 122 passed, 0 skipped.
+# Pointed at PostgreSQL 16 (as in CI) the full suite passes with zero skips.
 POSTGRES_TEST_URL=postgresql+psycopg2://postgres@/symbiotic_test ./scripts/verify.sh postgres
 
+cd frontend && npm test      # 123 unit tests (Vitest)
 cd frontend && npm run e2e   # browser tests (starts the API and the app itself)
 ```
 
@@ -157,8 +159,8 @@ backend/
     models/          30 tables across identity, infrastructure, operations,
                      simulation, optimization, workflow, system
   migrations/        Alembic revisions (env.py renders custom UTCDateTime)
-  tests/             122 tests: engines, API contract, RBAC, workflow e2e,
-                     migrations, PostgreSQL parity
+  tests/             331+ tests: engines, API contract, RBAC, workflow e2e,
+                     AI features, migrations, PostgreSQL parity
 frontend/
   app/               27 routes: landing, auth, shell, and every operational screen
   components/        ui primitives, 3D city (city3d/), twin canvas fallback, charts, layout
@@ -216,11 +218,14 @@ docker compose up --build
 For a public deployment, set `NEXT_PUBLIC_DEMO_LOGIN=0` so the one-click demo
 accounts are not advertised on the sign-in page.
 
-**No public deployment exists for this entry.** The compose stack, both Dockerfiles
-and the proxy are prepared and were reviewed statically, but no image was built and
-no URL was tested in the audit environment. See
-[docs/SUBMISSION.md](docs/SUBMISSION.md) §S03 for the exact blocker and the
-commands that finish it.
+**Live deployment (Render Free Tier, PostgreSQL 16, Singapore):**
+
+- **Frontend:** https://symbiotic-city-web.onrender.com
+- **Backend API:** https://symbiotic-city-api.onrender.com/api/health
+
+Note: Render Free Tier services spin down after inactivity; the first request after idle may take ~30–50 seconds while the instance wakes.
+
+See [docs/SUBMISSION.md](docs/SUBMISSION.md) §S03 for deployment verification details.
 
 ## Licence
 
