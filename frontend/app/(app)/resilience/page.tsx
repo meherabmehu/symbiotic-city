@@ -54,6 +54,7 @@ import {
 } from "@/components/ui";
 import { ZoneRiskMap, bandToken, type HeatAsset, type HeatZone } from "@/components/zone-risk-map";
 import { api, errorMessage, qs } from "@/lib/api";
+import { AiFeatureCard } from "@/components/ai/ai-feature-card";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime, formatNumber, percent, titleCase } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
@@ -1387,6 +1388,16 @@ export default function ResiliencePage() {
           </>
         }
       />
+
+      <div className="mt-4">
+        <AiFeatureCard
+          testId="resilience-report"
+          title="Resilience report"
+          subtitle="A short situational brief from the platform's own figures — exposure, failures, tasks and the criticality index. Provider-labelled, no invented numbers."
+          endpoint="/ai/resilience/report"
+          buttonLabel="Generate report"
+        />
+      </div>
 
       <Tabs
         value={tab}

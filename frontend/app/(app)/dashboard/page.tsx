@@ -25,6 +25,7 @@ import {
 import { ComparisonBarChart, StatusDonut, TrendAreaChart } from "@/components/charts";
 import { TwinView } from "@/components/city3d/twin-view";
 import { NotificationTicker } from "@/components/notification-ticker";
+import { CityCopilot } from "@/components/ai/city-copilot";
 import {
   Alert,
   Badge,
@@ -228,6 +229,8 @@ export default function DashboardPage() {
               icon={<Gauge className="h-4 w-4" />}
             />
           </section>
+
+          <CityCopilot />
 
           <div className="grid gap-4 xl:grid-cols-3">
             <Panel className="xl:col-span-2">
