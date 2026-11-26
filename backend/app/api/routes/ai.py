@@ -112,6 +112,10 @@ def _lang_instruction(lang: str) -> str:
 # ------------------------------------------------------------------ copilot
 
 _COPILOT_BASE = ("analytics:read", "twin:read", "resilience:read")
+_CRITICALITY_KEYWORDS = frozenset({
+    "critical", "criticality", "rank", "ranking", "ranked",
+    "risk", "risks", "top", "worst", "most", "impact", "cascade", "consequence", "single",
+})
 
 
 @router.post("/ai/copilot")
@@ -194,6 +198,55 @@ async def copilot(
             context_rows.append(
                 {"type": "task", "code": task.code, "title": task.title, "status": task.status}
             )
+
+    if "resilience:read" in held:
+        try:
+            from app.services import criticality as criticality_service
+
+            crit_data = criticality_service.analyse(db, limit=25)
+            ranking = crit_data.get("ranking", [])
+            rank_by_code = {
+                row["code"]: (pos, row)
+                for pos, row in enumerate(ranking, start=1)
+            }
+            for ctx in context_rows:
+                if ctx.get("type") == "asset" and ctx.get("code") in rank_by_code:
+                    pos, row = rank_by_code[ctx["code"]]
+                    ctx["criticality_rank"] = pos
+                    ctx["criticality_index"] = row["criticality_index"]
+                    consequence = row.get("consequence") or {}
+                    if consequence.get("explanation"):
+                        ctx["consequence"] = consequence["explanation"]
+
+            lowered_tokens = {t.lower() for t in tokens}
+            if lowered_tokens & _CRITICALITY_KEYWORDS:
+                cited_asset_ids = {
+                    c["entity_id"] for c in citations if c["entity_type"] == "asset"
+                }
+                for pos, row in enumerate(ranking[:5], start=1):
+                    if row["asset_id"] not in cited_asset_ids:
+                        citations.append(
+                            ai_features.citation(
+                                "asset",
+                                row["asset_id"],
+                                f"{row['code']} {row['name']}",
+                                f"rank #{pos} · criticality {row['criticality_index']}",
+                            )
+                        )
+                        cited_asset_ids.add(row["asset_id"])
+                    context_rows.append(
+                        {
+                            "type": "criticality_ranking",
+                            "rank": pos,
+                            "code": row["code"],
+                            "name": row["name"],
+                            "criticality_index": row["criticality_index"],
+                            "consequence": (row.get("consequence") or {}).get("explanation", ""),
+                        }
+                    )
+        except Exception:
+            # Empty city or stats hiccup never fails the copilot request.
+            pass
 
     system = (
         f"{_lang_instruction(payload.lang)} You answer about the city's live records. "
@@ -591,7 +644,7 @@ def _report_stats(db) -> dict[str, Any]:
         stats["top_risks"] = [
             {"label": f"{row['code']} {row['name']}",
              "reason": f"criticality index {row['criticality_index']}"}
-            for row in index.get("ranked", [])[:3]
+            for row in index.get("ranking", [])[:3]
         ]
     except Exception:
         # An empty city (409 from analyse) or any stats hiccup degrades the
