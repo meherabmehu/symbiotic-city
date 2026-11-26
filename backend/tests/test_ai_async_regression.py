@@ -308,10 +308,10 @@ class TestCopilotInfrastructureData:
     """Copilot must retrieve real infrastructure data including criticality."""
 
     def test_copilot_retrieves_ps02_infrastructure(self, city_operator, async_llm):
-        """Verify the copilot's context includes PS-02 and its data."""
-        provider = async_llm("PS-02 is a critical power asset.")
+        """Verify the copilot's context includes PS-02 and its criticality ranking."""
+        provider = async_llm("PS-02 is ranked #1 in criticality.")
         response = city_operator.post(
-            "/api/ai/copilot", json={"message": "Tell me about PS-02 criticality"}
+            "/api/ai/copilot", json={"message": "Tell me about PS-02 criticality ranking"}
         )
         assert response.status_code == 200
         payload = response.json()["data"]
@@ -320,9 +320,26 @@ class TestCopilotInfrastructureData:
         assert any("PS-02" in label for label in cited_labels), (
             f"PS-02 must be cited; got: {cited_labels}"
         )
-        # The LLM received PS-02 data in the prompt context
+        # The LLM received PS-02 data AND its real criticality rank/index in the prompt context
         joined = "\n".join(m["content"] for call in provider.calls for m in call)
         assert "PS-02" in joined
+        assert '"criticality_rank": 1' in joined
+        assert '"criticality_index": 84.3' in joined
+
+    def test_copilot_retrieves_criticality_ranking_without_asset_code(self, city_operator, async_llm):
+        """Asking about the most critical assets without naming a code still retrieves PS-02."""
+        provider = async_llm("PS-02 Northgate Gas Turbine is the most critical asset.")
+        response = city_operator.post(
+            "/api/ai/copilot", json={"message": "What is the most critical asset?"}
+        )
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        cited_labels = [c["label"] for c in payload["citations"]]
+        assert any("PS-02" in label for label in cited_labels), cited_labels
+        joined = "\n".join(m["content"] for call in provider.calls for m in call)
+        assert '"type": "criticality_ranking"' in joined
+        assert "PS-02" in joined
+        assert "84.3" in joined
 
     def test_resilience_report_includes_criticality_rankings(self, city_operator):
         """The report stats must include criticality data, not generic answers."""
@@ -332,11 +349,9 @@ class TestCopilotInfrastructureData:
         assert response.status_code == 200
         payload = response.json()["data"]
         stats = payload["stats"]
-        # Criticality data should be populated from the real database
         assert "criticality" in stats
-        # Top risks should include ranked assets (if data is seeded)
-        if stats.get("top_risks"):
-            # Each risk has a label and reason with a criticality index
-            for risk in stats["top_risks"]:
-                assert "label" in risk
-                assert "reason" in risk
+        assert stats.get("top_risks"), "top_risks must be populated from criticality ranking"
+        assert any("PS-02" in risk["label"] for risk in stats["top_risks"])
+        for risk in stats["top_risks"]:
+            assert "label" in risk
+            assert "reason" in risk
