@@ -17,8 +17,16 @@ import { AiError, AiReplyCard, ProviderChip, useAiCall } from "@/components/ai/a
 interface ExtractResult {
   reply: string | null;
   provider: string;
+  truncated?: boolean;
+  notice?: string | null;
   lang: "en" | "bn";
   parsed_by?: string;
+  severity?: {
+    index: number;
+    band: string;
+    thresholds: string;
+    source: string;
+  };
   scenario: { id: number; name: string; steps?: number } | null;
   validation?: { ok: boolean; problems: string[] };
   observation?: Record<string, unknown> | null;
@@ -116,6 +124,7 @@ export function WhatIfExtract({ onCreated }: { onCreated?: () => void }) {
             <AiReplyCard
               reply={result.reply ?? ""}
               provider={result.provider}
+              notice={result.notice}
               footer={
                 <>
                   {result.parsed_by ? (

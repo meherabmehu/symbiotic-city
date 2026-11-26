@@ -92,7 +92,14 @@ export function CityCopilot() {
 
       {loading ? <AiLoading label="Reading the city records…" /> : null}
       {error ? <AiError message={error} /> : null}
-      {result ? <AiReplyCard reply={result.reply ?? ""} provider={result.provider} citations={result.citations} /> : null}
+      {result ? (
+        <AiReplyCard
+          reply={result.reply ?? ""}
+          provider={result.provider}
+          citations={result.citations}
+          notice={result.notice}
+        />
+      ) : null}
     </section>
   );
 }

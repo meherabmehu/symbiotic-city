@@ -45,7 +45,14 @@ export function AiFeatureCard({
         </Button>
         {loading ? <p className="mt-3 text-xs text-ink-400" role="status">Asking the assistant…</p> : null}
         {error ? <AiError message={error} /> : null}
-        {result ? <AiReplyCard reply={replyText(result)} provider={result.provider} citations={result.citations} /> : null}
+        {result ? (
+          <AiReplyCard
+            reply={replyText(result)}
+            provider={result.provider}
+            citations={result.citations}
+            notice={result.notice}
+          />
+        ) : null}
       </div>
     </Panel>
   );
