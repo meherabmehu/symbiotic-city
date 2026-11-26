@@ -361,7 +361,10 @@ export default function TwinPage() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {/* grid-cols-1 as the base: without it the below-md track is an implicit
+          `auto` column that grows to its widest item's min-content (the asset
+          rows are nowrap), pushing the page 17px past a phone viewport. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <Panel>
               <PanelHeader title="Critical services" subtitle="Priority 1–2 assets in the model" icon={<AlertTriangle className="h-4 w-4" />} />
               <ul className="space-y-2">

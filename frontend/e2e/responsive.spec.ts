@@ -80,8 +80,11 @@ test.describe("responsive layout", () => {
 
   test("navigation is reachable on a small screen", async ({ page }) => {
     await login(page);
-    const toggle = page.getByRole("button", { name: /menu|navigation/i }).first();
-    if (await toggle.isVisible()) {
+    // Exact label: the closed drawer also contains a "Close navigation" button
+    // (translated off-canvas), and a loose /navigation/ match picked that one.
+    // Desktop hides the toggle entirely -- the sidebar is always there.
+    const toggle = page.getByRole("button", { name: "Open navigation" });
+    if (await toggle.isVisible().catch(() => false)) {
       await toggle.click();
     }
     await expect(page.getByRole("navigation").first()).toBeVisible();
