@@ -17,13 +17,18 @@ from tests.conftest import unique_category as _unique_category
 
 
 class FakeProvider:
-    """Stands in for GroqProvider; records the exact messages it was sent."""
+    """Stands in for GroqProvider; records the exact messages it was sent.
+
+    This is ``async def`` just like the real provider, so a missing ``await``
+    in the route will return a coroutine object instead of an AiReply and
+    blow up with ``AttributeError: 'coroutine' has no attribute 'text'``.
+    """
 
     def __init__(self, reply_text: str) -> None:
         self.reply_text = reply_text
         self.calls: list[list[dict]] = []
 
-    def chat(self, messages, *, temperature=0.2, max_tokens=700):
+    async def chat(self, messages, *, temperature=0.2, max_tokens=700):
         self.calls.append(list(messages))
         return SimpleNamespace(text=self.reply_text, model="fake-model", provider="groq")
 

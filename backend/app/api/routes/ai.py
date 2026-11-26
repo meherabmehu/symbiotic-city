@@ -20,6 +20,7 @@ Shared contract for every endpoint here:
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
@@ -43,6 +44,8 @@ from app.schemas.ai import (
 from app.services.ai import SYSTEM_GUARD, get_provider, provider_label, untrusted
 from app.services.ai import features as ai_features
 from app.services.ai.provider import AiError, AiReply
+
+logger = logging.getLogger("symbiotic.ai")
 
 router = APIRouter(tags=["ai"])
 
@@ -76,7 +79,7 @@ def _rate_limit(user_id: int) -> None:
 # get_provider is looked up on this module so tests can swap it in one place.
 
 
-def _chat(messages: list[dict[str, str]], *, max_tokens: int = 700) -> tuple[str | None, str]:
+async def _chat(messages: list[dict[str, str]], *, max_tokens: int = 700) -> tuple[str | None, str]:
     """Call the provider; on any failure return (None, rule-based label).
 
     Features never surface provider errors as feature errors -- they fall
@@ -86,8 +89,11 @@ def _chat(messages: list[dict[str, str]], *, max_tokens: int = 700) -> tuple[str
     if provider is None:
         return None, provider_label(has_key=False)
     try:
-        reply: AiReply = provider.chat(messages, max_tokens=max_tokens)
+        reply: AiReply = await provider.chat(messages, max_tokens=max_tokens)
     except AiError:
+        return None, provider_label(has_key=False)
+    except Exception:
+        logger.exception("Unexpected error from AI provider")
         return None, provider_label(has_key=False)
     return reply.text, provider_label(has_key=True)
 
@@ -106,10 +112,14 @@ def _lang_instruction(lang: str) -> str:
 # ------------------------------------------------------------------ copilot
 
 _COPILOT_BASE = ("analytics:read", "twin:read", "resilience:read")
+_CRITICALITY_KEYWORDS = frozenset({
+    "critical", "criticality", "rank", "ranking", "ranked",
+    "risk", "risks", "top", "worst", "most", "impact", "cascade", "consequence", "single",
+})
 
 
 @router.post("/ai/copilot")
-def copilot(
+async def copilot(
     payload: CopilotRequest,
     db: DbSession,
     user: CurrentUser,
@@ -189,6 +199,55 @@ def copilot(
                 {"type": "task", "code": task.code, "title": task.title, "status": task.status}
             )
 
+    if "resilience:read" in held:
+        try:
+            from app.services import criticality as criticality_service
+
+            crit_data = criticality_service.analyse(db, limit=25)
+            ranking = crit_data.get("ranking", [])
+            rank_by_code = {
+                row["code"]: (pos, row)
+                for pos, row in enumerate(ranking, start=1)
+            }
+            for ctx in context_rows:
+                if ctx.get("type") == "asset" and ctx.get("code") in rank_by_code:
+                    pos, row = rank_by_code[ctx["code"]]
+                    ctx["criticality_rank"] = pos
+                    ctx["criticality_index"] = row["criticality_index"]
+                    consequence = row.get("consequence") or {}
+                    if consequence.get("explanation"):
+                        ctx["consequence"] = consequence["explanation"]
+
+            lowered_tokens = {t.lower() for t in tokens}
+            if lowered_tokens & _CRITICALITY_KEYWORDS:
+                cited_asset_ids = {
+                    c["entity_id"] for c in citations if c["entity_type"] == "asset"
+                }
+                for pos, row in enumerate(ranking[:5], start=1):
+                    if row["asset_id"] not in cited_asset_ids:
+                        citations.append(
+                            ai_features.citation(
+                                "asset",
+                                row["asset_id"],
+                                f"{row['code']} {row['name']}",
+                                f"rank #{pos} · criticality {row['criticality_index']}",
+                            )
+                        )
+                        cited_asset_ids.add(row["asset_id"])
+                    context_rows.append(
+                        {
+                            "type": "criticality_ranking",
+                            "rank": pos,
+                            "code": row["code"],
+                            "name": row["name"],
+                            "criticality_index": row["criticality_index"],
+                            "consequence": (row.get("consequence") or {}).get("explanation", ""),
+                        }
+                    )
+        except Exception:
+            # Empty city or stats hiccup never fails the copilot request.
+            pass
+
     system = (
         f"{_lang_instruction(payload.lang)} You answer about the city's live records. "
         "Cite entities by their code exactly as given in the context. "
@@ -200,7 +259,7 @@ def copilot(
     else:
         user_block = f"Operator question:\n{payload.message}"
 
-    reply_text, label = _chat(_messages(system, user_block), max_tokens=500)
+    reply_text, label = await _chat(_messages(system, user_block), max_tokens=500)
     if reply_text is None:
         reply_text = ai_features.copilot_fallback(
             payload.lang, citations, has_matches=bool(citations)
@@ -224,7 +283,7 @@ def _tokenise(message: str) -> list[str]:
 # ------------------------------------------------------ incident explanation
 
 @router.post("/ai/incidents/{incident_id}/explain")
-def explain_incident(
+async def explain_incident(
     incident_id: int,
     payload: IncidentExplainRequest,
     db: DbSession,
@@ -265,7 +324,7 @@ def explain_incident(
         "what happened, what it affects, what is already being done, and what to "
         "check next. Use only the records provided."
     )
-    reply_text, label = _chat(_messages(system, context), max_tokens=600)
+    reply_text, label = await _chat(_messages(system, context), max_tokens=600)
     if reply_text is None:
         reply_text = ai_features.incident_fallback(payload.lang, incident_row, asset_label)
 
@@ -282,7 +341,7 @@ def explain_incident(
 # ----------------------------------------------------------- recovery advisor
 
 @router.post("/ai/plans/{plan_id}/explain")
-def explain_plan(
+async def explain_plan(
     plan_id: int,
     payload: PlanExplainRequest,
     db: DbSession,
@@ -308,7 +367,7 @@ def explain_plan(
         "numbers are authoritative -- never invent different ones, never present a "
         "new solution as the plan."
     )
-    reply_text, label = _chat(_messages(system, context), max_tokens=700)
+    reply_text, label = await _chat(_messages(system, context), max_tokens=700)
     if reply_text is None:
         reply_text = ai_features.plan_fallback(plan_dict)
 
@@ -339,7 +398,7 @@ def explain_plan(
 # ------------------------------------------------------- what-if extraction
 
 @router.post("/ai/whatif/extract", status_code=201)
-def extract_whatif(
+async def extract_whatif(
     payload: WhatIfExtractRequest,
     db: DbSession,
     user: CurrentUser,
@@ -357,7 +416,7 @@ def extract_whatif(
 
     _rate_limit(user.id)
 
-    extracted, parsed_by = _extract(payload.text, db)
+    extracted, parsed_by = await _extract(payload.text, db)
     problems = _validate_extracted(extracted, db)
     base = {
         "extracted": extracted,
@@ -405,7 +464,7 @@ def extract_whatif(
         "what-if observation",
         [{"scenario": scenario.code, "metrics": metrics, "note": observation.note}],
     )
-    reply_text, label = _chat(_messages(system, context), max_tokens=500)
+    reply_text, label = await _chat(_messages(system, context), max_tokens=500)
     if reply_text is None:
         reply_text = (
             f"Rule-based summary: scenario {scenario.code} ran with "
@@ -428,7 +487,7 @@ def extract_whatif(
     )
 
 
-def _extract(text: str, db) -> tuple[dict[str, Any], str]:
+async def _extract(text: str, db) -> tuple[dict[str, Any], str]:
     """Model first (when configured), deterministic parser as the floor."""
     provider = get_provider()
     if provider is not None:
@@ -440,7 +499,7 @@ def _extract(text: str, db) -> tuple[dict[str, Any], str]:
             "description (the original sentence). JSON only, no prose."
         )
         try:
-            reply = provider.chat(
+            reply = await provider.chat(
                 _messages(system, f"Sentence:\n{untrusted('operator text', text)}"),
                 max_tokens=400,
                 temperature=0.0,
@@ -450,6 +509,8 @@ def _extract(text: str, db) -> tuple[dict[str, Any], str]:
                 return _merge_extracted(parsed, text), "llm"
         except AiError:
             pass
+        except Exception:
+            logger.exception("Unexpected error during what-if extraction")
     return ai_features.extract_rule_based(text), "rule-based"
 
 
@@ -521,7 +582,7 @@ def _validate_extracted(extracted: dict[str, Any], db) -> list[str]:
 # ----------------------------------------------------- resilience report
 
 @router.post("/ai/resilience/report")
-def resilience_report(
+async def resilience_report(
     payload: ResilienceReportRequest,
     db: DbSession,
     user: CurrentUser,
@@ -538,7 +599,7 @@ def resilience_report(
         "figures provided. Do not invent numbers."
     )
     context = ai_features.fenced_block("computed report figures", [stats])
-    reply_text, label = _chat(_messages(system, context), max_tokens=800)
+    reply_text, label = await _chat(_messages(system, context), max_tokens=800)
     if reply_text is None:
         reply_text = ai_features.report_fallback(stats)
     return ok({"report": reply_text, "stats": stats, "lang": payload.lang, "provider": label})
@@ -583,7 +644,7 @@ def _report_stats(db) -> dict[str, Any]:
         stats["top_risks"] = [
             {"label": f"{row['code']} {row['name']}",
              "reason": f"criticality index {row['criticality_index']}"}
-            for row in index.get("ranked", [])[:3]
+            for row in index.get("ranking", [])[:3]
         ]
     except Exception:
         # An empty city (409 from analyse) or any stats hiccup degrades the
