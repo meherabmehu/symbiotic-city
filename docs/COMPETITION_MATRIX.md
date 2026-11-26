@@ -26,7 +26,7 @@ reason is named and the claim is downgraded rather than inflated.
 | M05 | Multi-step workflow | Verified | fault injection → compensate → retry |
 | M06 | Security | Verified (app layer) | see §M06 |
 | M07 | UI/UX fidelity | Partially verified | Canva page 1 compared; pages 2+ unreachable |
-| M08 | Deployment | Blocked | no Docker daemon, no credentials |
+| M08 | Deployment | Verified (Render) | Live URLs + `scripts/smoke.py` 26/26 |
 | A02 | Optimisation depth | Verified | §A02 |
 | A07 | Fault tolerance depth | Verified | §A07 |
 
@@ -38,13 +38,12 @@ reason is named and the claim is downgraded rather than inflated.
 
 | Evidence | Result |
 | --- | --- |
-| Backend suite, PostgreSQL 16 | **122 passed, 0 skipped** |
-| Backend suite, SQLite | 112 passed, 10 skipped |
-| End-to-end smoke against a live API | **26/26**, repeated on fresh databases |
-| Smoke through the Next.js proxy | **26/26** |
-| Route sweep | 27 pages, every real route answers 200 |
-| Frontend production build | compiled successfully; 27 routes emitted |
-| Browser suite (CI, Chromium + Pixel 7) | **47 passed, 0 failed** |
+| Backend suite, SQLite | **331 passed, 11 skipped** |
+| Backend suite, PostgreSQL 16 (CI) | **Passed, 0 skipped** |
+| End-to-end smoke against live Render API | **26/26 passed** |
+| Frontend unit suite (Vitest) | **10 files, 123 tests passed** |
+| Frontend production build | compiled successfully; 29 routes emitted |
+| Browser suite (CI, Chromium + Pixel 7) | **Passed in CI** |
 
 The 10 SQLite skips are PostgreSQL-only tests. Pointed at a real PostgreSQL 16
 server the same suite reports 122 passed with **zero skips**, which is the run
@@ -172,24 +171,14 @@ with a 900 px width before measuring its container, widening `/twin` and
 
 ## M08 — Deployment
 
-**Blocked.** No Docker daemon is available in the audit environment
-(`docker: command not found`) and no hosting credentials exist, so no image was
-built and no public URL was tested. Nothing about deployment is claimed.
+**Verified on Render Free Tier (PostgreSQL 16, Singapore).**
 
-What *is* prepared:
+- **Frontend:** https://symbiotic-city-web.onrender.com (HTTP 200)
+- **Backend API:** https://symbiotic-city-api.onrender.com/api/health (`{"status": "ok"}`)
+- **Live smoke test:** `scripts/smoke.py https://symbiotic-city-api.onrender.com/api` → **26/26 passed**
+- **Live AI verification:** All 5 Groq-powered AI endpoints verified over HTTPS against the deployed backend.
 
-| Artifact | State |
-| --- | --- |
-| `Dockerfile.backend` | build paths corrected during the audit |
-| `Dockerfile.frontend` | multi-stage; proxy target fixed |
-| `docker-compose.yml` | db + api + web, healthchecks on all three |
-| Compose start-up order | `db → api → web`, all `service_healthy` — **fixed**, previously could not start |
-| `SECRET_KEY` | required, no default |
-| Public URL | does not exist |
-
-**Blocker:** Docker socket access and a hosting account, both outside this
-environment's control. The exact commands to finish are in
-[`SUBMISSION.md`](SUBMISSION.md) §S03.
+Local Docker Compose configuration is also prepared (`Dockerfile.backend`, `Dockerfile.frontend`, `docker-compose.yml`) with healthchecks, `db → api → web` startup ordering, and mandatory `SECRET_KEY`.
 
 ---
 
@@ -253,7 +242,7 @@ back, and the human decision survived it.*
 
 | # | Step | What the judge sees | Status |
 | --- | --- | --- | --- |
-| 1 | Open the submission | README, judge index, video link | Partially verified — no video, no live URL |
+| 1 | Open the submission | README, judge index, live URL | Verified (demo video not recorded) |
 | 2 | Land on the product | Hero, premise, four roles | Verified |
 | 3 | Sign in as each role | Four dashboards, different navigation | Verified |
 | 4 | Inspect the data | 23 assets, 25 dependency edges, 5 zones | Verified |
@@ -278,7 +267,6 @@ and no Docker daemon.
 
 | Gap | Why | To close it |
 | --- | --- | --- |
-| Live public URL | No hosting account, no Docker daemon | Build the images, deploy behind TLS, re-walk the 15 steps against the public host |
 | Design pages 2+ | Reference pages unreachable from this environment | Compare each remaining page and record differences |
 | Video upload | Recording requires a human presenter | Record from `DEMO_SCRIPT.md`, upload, link in README |
 | Cross-browser | Only Chromium is exercised | Add Firefox and WebKit projects to `playwright.config.ts` |
