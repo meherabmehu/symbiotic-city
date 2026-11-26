@@ -725,7 +725,11 @@ export const CAMERA_MODES: Record<CameraMode, { label: string; description: stri
  */
 export const CITY_BOUNDS = {
   minDistance: 18,
-  maxDistance: CITY_EXTENT * 3.2,
+  // 8x the half-extent, not 3.2x: the *solved* fit distances for narrow desktop
+  // windows (and any portrait viewport) run past the old 320 cap, and OrbitControls
+  // clamping to it silently cropped the very content "Fit city" promises to show.
+  // The solver only pulls this far when the viewport aspect demands it.
+  maxDistance: CITY_EXTENT * 8,
   /** Vertically: never dive below the ground plane or flip over the pole. */
   minPolarAngle: 0.08,
   maxPolarAngle: Math.PI / 2 - 0.06,
@@ -738,11 +742,26 @@ export function cameraPose(mode: CameraMode): CameraPose {
   switch (mode) {
     case "isometric":
       return { position: [d * 1.15, d * 1.15, d * 1.15], target: [0, 0, 0] };
-    case "top":
-      return { position: [0, d * 2.1, 0.001], target: [0, 0, 0] };
+    case "top": {
+      // Top-down, leaning by exactly the controls' minPolarAngle rather than an
+      // arbitrary epsilon: OrbitControls clamps the camera to that angle at
+      // runtime, so a more vertical *solved* direction would be quietly moved
+      // and the projection the framing solver optimised would not be the one
+      // on screen (the fit would miss the frame).
+      const lean = CITY_BOUNDS.minPolarAngle;
+      return {
+        position: [0, d * 2.1 * Math.cos(lean), d * 2.1 * Math.sin(lean)],
+        target: [0, 0, 0],
+      };
+    }
     case "perspective":
     default:
-      return { position: [d * 1.05, d * 0.78, d * 1.15], target: [0, 0, 0] };
+      // Candidate A: near-north oblique at a steeper pitch. The old pose looked
+      // along the city's diagonal (azimuth ~42, pitch ~27), which projects the
+      // square grid as a rhombus -- every frame corner falls outside the city
+      // and reads as black void. A near-straight-on oblique projects a
+      // trapezoid whose corners can sit inside the frame.
+      return { position: [d * 0.24, d * 1.11, d * 1.30], target: [0, 0, 0] };
   }
 }
 
@@ -790,9 +809,28 @@ const FIT_TARGET = 0.9;
  *                that crop into the near triangle is what makes the shot read
  *                as "inside the city" rather than "a model on a table".
  */
-const FILL_WIDTH = 1.02;
-const FILL_FAR = 0.95;
+const FILL_WIDTH = 0.92;
+const FILL_FAR = 0.98;
 const FILL_NEAR = 2.8;
+
+/**
+ * Axis-aligned world bounds of what the camera has to frame.
+ *
+ * `CITY_CONTENT_BOUNDS` is the analytic city box -- used by unit tests and as a
+ * fallback before the scene exists. The running app prefers the *rendered*
+ * bounds (`computeContentBox` in city-3d.tsx): solving against the real scene
+ * means the fit genuinely includes every road and building that is on screen,
+ * instead of a hand-written box the scene may have outgrown.
+ */
+export interface CityBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+export const CITY_CONTENT_BOUNDS: CityBounds = {
+  min: [-CITY_EXTENT * 1.06, 0, -CITY_EXTENT * 1.06],
+  max: [CITY_EXTENT * 1.06, 17, CITY_EXTENT * 1.06],
+};
 
 /**
  * How much of the half-viewport the city's bounding box covers when the camera
@@ -806,12 +844,13 @@ function fitExtent(
   aspect: number,
   fov: number,
   fill: boolean,
+  bounds: CityBounds,
 ): number {
   const [dx, dy, dz] = direction;
   const px = dx * distance;
   const py = dy * distance;
   const pz = dz * distance;
-  // Camera basis: n points from the target toward thecamera, so the view axis
+  // Camera basis: n points from the target toward the camera, so the view axis
   // is -n; right = (up x n) normalised; up_cam = n x right. The top-down
   // preset leans a thousandth of a unit, which is what keeps right defined
   // there instead of collapsing against the world up vector.
@@ -828,40 +867,59 @@ function fitExtent(
 
   const tanV = Math.tan((fov * Math.PI) / 360);
   const tanH = tanV * Math.max(aspect, 0.2);
-  const half = CITY_EXTENT * 1.06;
 
-  let extent = 0;
-  for (const y of [0, 17]) {
-    for (const x of [-half, half]) {
-      for (const z of [-half, half]) {
+  // Signed screen-space bounds of the projected box. Coverage is a *span*
+  // (maxX - minX), not the largest absolute coordinate: a perspective view
+  // from an off-axis preset projects the box asymmetrically, and framing to
+  // the worst corner while measuring the span (or vice versa) is how the two
+  // drifted apart -- the solver must optimise exactly what the coverage
+  // probe and projectedSpan() report.
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const y of [bounds.min[1], bounds.max[1]]) {
+    for (const x of [bounds.min[0], bounds.max[0]]) {
+      for (const z of [bounds.min[2], bounds.max[2]]) {
         const vx = x - px;
         const vy = y - py;
         const vz = z - pz;
         const depth = -(vx * nx + vy * ny + vz * nz);
         if (depth <= 0.01) continue;
-        const sx = vx * rx + vz * rz;
-        const sy = vx * ux + vy * uy + vz * uz;
-        const ex = Math.abs(sx) / depth / tanH;
-        const ey = Math.abs(sy) / depth / tanV;
-        if (fill) {
-          // Fill framing (the opening shot): the composition the reference
-          // dashboard uses -- the city runs to both side edges, the far district
-          // stays inside the top of the frame, and the near boundary road is
-          // allowed to crop away at the bottom. Each axis gets its own allowance
-          // and the result is compared against 1.0, so the solver stops at the
-          // first distance where every axis is inside its own budget. Fitting
-          // the near corner *inside* the frame is what made whole-city fits pull
-          // so far back that a wide viewport left the city floating small in the
-          // middle with empty flanks.
-          if (depth >= distance) extent = Math.max(extent, ex / FILL_WIDTH, ey / FILL_FAR);
-          else extent = Math.max(extent, ex / FILL_WIDTH, ey / FILL_NEAR);
-        } else {
-          extent = Math.max(extent, ex, ey);
-        }
+        const ndcX = (vx * rx + vz * rz) / depth / tanH;
+        const ndcY = (vx * ux + vy * uy + vz * uz) / depth / tanV;
+        minX = Math.min(minX, ndcX);
+        maxX = Math.max(maxX, ndcX);
+        minY = Math.min(minY, ndcY);
+        maxY = Math.max(maxY, ndcY);
       }
     }
   }
-  return extent;
+  if (!Number.isFinite(minX)) return Infinity;
+
+  if (fill) {
+    // Fill framing (the opening shot): the composition the reference
+    // dashboard uses -- the city spans most of the width, the far district
+    // stays inside the top of the frame, and the near boundary road is
+    // allowed to crop away at the bottom. Each term is a fraction of its own
+    // budget; the solver stops at the first distance where every term is at
+    // or below 1.0. Forcing the near corner inside the frame is what made
+    // whole-city fits pull so far back that wide viewports left the city
+    // floating small with empty flanks.
+    //
+    // On a portrait phone the 85-95% width band would paint the city as a
+    // thin strip across a tall screen with voids above and below, so narrow
+    // aspects zoom in until the frame is filled and let the sides crop --
+    // the desktop band stays exactly as specified.
+    const widthBudget = aspect < 0.85 ? 1.8 : FILL_WIDTH;
+    return Math.max(
+      ((maxX - minX) / 2) / widthBudget,
+      Math.max(maxY, 0) / FILL_FAR,
+      Math.max(-minY, 0) / FILL_NEAR,
+    );
+  }
+  // Whole city: every corner inside the viewport, margin included.
+  return Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY));
 }
 
 /** Shared bisection: extent shrinks monotonically as the camera pulls back. */
@@ -870,6 +928,7 @@ function solveFit(
   aspect: number,
   fov: number,
   fill: boolean,
+  bounds: CityBounds,
 ): number {
   const pose = cameraPose(mode);
   const [bx, by, bz] = pose.position;
@@ -881,7 +940,7 @@ function solveFit(
   let hi = 2400;
   for (let i = 0; i < 34; i++) {
     const mid = (lo + hi) / 2;
-    if (fitExtent(direction, mid, aspect, fov, fill) > target) lo = mid;
+    if (fitExtent(direction, mid, aspect, fov, fill, bounds) > target) lo = mid;
     else hi = mid;
   }
   return (lo + hi) / 2;
@@ -900,13 +959,18 @@ function solveFit(
  * The preset's viewing direction is kept, so fit reads as "same angle, whole
  * city in frame", and top-down stays directly overhead.
  */
-export function fitPose(mode: CameraMode, aspect: number, fovDegrees = 42): CameraPose {
+export function fitPose(
+  mode: CameraMode,
+  aspect: number,
+  fovDegrees = 42,
+  bounds: CityBounds = CITY_CONTENT_BOUNDS,
+): CameraPose {
   const pose = cameraPose(mode);
   const [bx, by, bz] = pose.position;
   const length = Math.hypot(bx, by, bz) || 1;
   const direction: [number, number, number] = [bx / length, by / length, bz / length];
   const fov = Math.min(90, Math.max(18, fovDegrees));
-  const distance = solveFit(mode, aspect, fov, false);
+  const distance = solveFit(mode, aspect, fov, false, bounds);
 
   return {
     position: [direction[0] * distance, direction[1] * distance, direction[2] * distance],
@@ -920,17 +984,85 @@ export function fitPose(mode: CameraMode, aspect: number, fovDegrees = 42): Came
  * frame, the near boundary road allowed to crop at the bottom. `fitPose` stays
  * the honest "show me the entire model" control; this is the shot you land on.
  */
-export function fillPose(mode: CameraMode, aspect: number, fovDegrees = 42): CameraPose {
+export function fillPose(
+  mode: CameraMode,
+  aspect: number,
+  fovDegrees = 42,
+  bounds: CityBounds = CITY_CONTENT_BOUNDS,
+): CameraPose {
   const pose = cameraPose(mode);
   const [bx, by, bz] = pose.position;
   const length = Math.hypot(bx, by, bz) || 1;
   const direction: [number, number, number] = [bx / length, by / length, bz / length];
   const fov = Math.min(90, Math.max(18, fovDegrees));
-  const distance = solveFit(mode, aspect, fov, true);
+  const distance = solveFit(mode, aspect, fov, true, bounds);
 
   return {
     position: [direction[0] * distance, direction[1] * distance, direction[2] * distance],
     target: [0, 0, 0],
+  };
+}
+
+/**
+ * Screen-space span of `bounds` seen from `pose`, as a fraction of the
+ * viewport (1 = edge to edge). The pure-math twin of what the in-page
+ * CoverageProbe measures from the rendered scene: framing targets are asserted
+ * against *projected* geometry here, never against canvas size or raw
+ * distances. Assumes the pose looks at the city centre (all fit/fill poses do).
+ */
+export function projectedSpan(
+  pose: CameraPose,
+  aspect: number,
+  fovDegrees: number,
+  bounds: CityBounds = CITY_CONTENT_BOUNDS,
+): { width: number; height: number; maxY: number; minY: number } {
+  const [bx, by, bz] = pose.position;
+  const distance = Math.hypot(bx, by, bz) || 1;
+  const direction: [number, number, number] = [bx / distance, by / distance, bz / distance];
+  const fov = Math.min(90, Math.max(18, fovDegrees));
+  const [dx, dy, dz] = direction;
+  const px = dx * distance;
+  const py = dy * distance;
+  const pz = dz * distance;
+  const nl = Math.hypot(px, py, pz) || 1;
+  const nx = px / nl;
+  const ny = py / nl;
+  const nz = pz / nl;
+  const rl = Math.hypot(nz, 0, -nx) || 1;
+  const rx = nz / rl;
+  const rz = -nx / rl;
+  const ux = ny * rz;
+  const uy = nz * rx - nx * rz;
+  const uz = -ny * rx;
+  const tanV = Math.tan((fov * Math.PI) / 360);
+  const tanH = tanV * Math.max(aspect, 0.2);
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const y of [bounds.min[1], bounds.max[1]]) {
+    for (const x of [bounds.min[0], bounds.max[0]]) {
+      for (const z of [bounds.min[2], bounds.max[2]]) {
+        const vx = x - px;
+        const vy = y - py;
+        const vz = z - pz;
+        const depth = -(vx * nx + vy * ny + vz * nz);
+        if (depth <= 0.01) continue;
+        const ndcX = (vx * rx + vz * rz) / depth / tanH;
+        const ndcY = (vx * ux + vy * uy + vz * uz) / depth / tanV;
+        minX = Math.min(minX, ndcX);
+        maxX = Math.max(maxX, ndcX);
+        minY = Math.min(minY, ndcY);
+        maxY = Math.max(maxY, ndcY);
+      }
+    }
+  }
+  return {
+    width: (maxX - minX) / 2,
+    height: (maxY - minY) / 2,
+    minY,
+    maxY,
   };
 }
 

@@ -1,0 +1,16 @@
+import { chromium } from "@playwright/test";
+const spc = (await import("/tmp/pwchromium/node_modules/@sparticuz/chromium/build/index.js")).default;
+const browser = await chromium.launch({ executablePath: await spc.executablePath(), args: spc.args, headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await page.goto("http://127.0.0.1:3010/login");
+await page.getByLabel(/^email address/i).fill("operator@symbiotic.city");
+await page.getByLabel(/^password/i).fill("Operator#2026");
+await page.getByRole("button", { name: /sign in/i }).click();
+await page.waitForURL(/\/dashboard/, { timeout: 20000 });
+await page.goto("http://127.0.0.1:3010/twin");
+await page.waitForFunction(() => window.__city3d?.ready === true, null, { timeout: 30000 });
+await page.waitForTimeout(4000);
+const cov = await page.evaluate(() => window.__city3d.coverage());
+console.log(JSON.stringify({ w: cov.widthPct?.toFixed(1), h: cov.heightPct?.toFixed(1), dist: Math.hypot(...cov.camera.position).toFixed(0), ndc: cov.ndc }));
+await page.screenshot({ path: "/tmp/cand-A.png" });
+await browser.close();

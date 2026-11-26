@@ -40,6 +40,8 @@ import {
   cameraPose,
   cascadeDepths,
   clampTarget,
+  CITY_CONTENT_BOUNDS,
+  type CityBounds,
   fillPose,
   fitPose,
   focusPose,
@@ -180,6 +182,12 @@ export interface City3DProps {
    * A counter rather than a boolean: pressing "fit" twice should fit twice.
    */
   fitRequest?: number;
+  /**
+   * Increments to restore the default immersive framing -- what "Reset view"
+   * means to a user who pressed Fit, focused a building, or expanded the
+   * panel. A counter, not a boolean, so pressing it twice reframes twice.
+   */
+  resetRequest?: number;
   /** Receives measured scene statistics roughly twice a second, when supplied. */
   onStats?: (stats: SceneStats) => void;
   /**
@@ -229,6 +237,7 @@ export function City3D(props: City3DProps) {
     focusId = null,
     focusIncidentId = null,
     fitRequest = 0,
+    resetRequest = 0,
     onStats,
     onToggleZones,
     onToggleEdges,
@@ -537,11 +546,12 @@ export function City3D(props: City3DProps) {
       <Canvas
         shadows={shadows}
         dpr={effectiveQuality === "high" ? [1, 2] : effectiveQuality === "balanced" ? [1, 1.5] : 1}
-        camera={{ position: cameraPose("perspective").position, fov: 42, near: 0.5, far: 900 }}
+        camera={{ position: cameraPose("perspective").position, fov: 42, near: 0.5, far: 1600 }}
         gl={{ antialias: effectiveQuality !== "low", powerPreference: "high-performance" }}
         onPointerMissed={() => onSelect?.(null)}
       >
         <CameraCapture cameraRef={cameraRef} />
+        <CoverageProbe cameraRef={cameraRef} />
         {onStats ? <SceneStatsReporter onStats={onStats} /> : null}
         <SceneColor />
         {/* Lighting: one hemisphere for ambient fill (cheap) and one directional
@@ -561,7 +571,13 @@ export function City3D(props: City3DProps) {
         {effectiveQuality === "high" ? <pointLight position={[0, 60, 0]} intensity={60} color="#4fb8ff" distance={260} /> : null}
 
         <Suspense fallback={null}>
-          <Ground reducedTexture={effectiveQuality === "low"} />
+          {/* Named so CoverageProbe can exclude the backdrop plate: the ground
+              is 2.6x the city on purpose (you never see its edge), and letting
+              it into a bounds measurement would report ~100% coverage no matter
+              how the city itself is framed. */}
+          <group name="backdrop">
+            <Ground reducedTexture={effectiveQuality === "low"} />
+          </group>
           <ZoneDiscs
             zones={model.zones}
             heat={overlay?.heat}
@@ -622,6 +638,7 @@ export function City3D(props: City3DProps) {
           focus={focusId != null ? findAsset(model.assets, focusId) : null}
           incident={focusIncidentId != null ? findAsset(model.assets, focusIncidentId) : null}
           fitRequest={fitRequest}
+          resetRequest={resetRequest}
           northRequest={northRequest}
           reducedMotion={reducedMotion}
           controlRef={controlRef}
@@ -878,16 +895,133 @@ function CameraCapture({ cameraRef }: { cameraRef: React.MutableRefObject<THREE.
   return null;
 }
 
+/**
+ * Live composition probe — `window.__city3d`.
+ *
+ * Canvas size proves nothing about framing: a correctly-sized canvas can still
+ * show a tiny city in the corner. This measures the *rendered scene*: world
+ * bounds of every visible object except the backdrop plate, projected through
+ * the live camera into screen space, reported as a percentage of the viewport
+ * the city's bounds span. E2E regression tests read it to fail on a small
+ * projected city, and it doubles as an in-browser diagnostic.
+ */
+/**
+ * World bounds of everything the camera should frame: every visible scene
+ * object except the named backdrop plate (the ground is deliberately larger
+ * than the city so its edge never shows; including it would report ~100%
+ * coverage no matter how the city itself is framed). Shared by the coverage
+ * probe and the camera solver so both measure exactly the same content.
+ */
+function computeContentBox(scene: THREE.Scene): THREE.Box3 {
+  const box = new THREE.Box3().makeEmpty();
+  for (const child of scene.children) {
+    if (!child.visible || child.name === "backdrop") continue;
+    const childBox = new THREE.Box3().setFromObject(child);
+    if (!childBox.isEmpty()) box.union(childBox);
+  }
+  return box;
+}
+
+function boxToBounds(box: THREE.Box3): CityBounds {
+  return {
+    min: [box.min.x, box.min.y, box.min.z],
+    max: [box.max.x, box.max.y, box.max.z],
+  };
+}
+
+function CoverageProbe({ cameraRef }: { cameraRef: React.MutableRefObject<THREE.Camera | null> }) {
+  const scene = useThree((state) => state.scene);
+  const camera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
+
+  useEffect(() => {
+    const measure = () => {
+      const active = cameraRef.current ?? camera;
+      const box = computeContentBox(scene);
+      if (box.isEmpty()) return null;
+
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const x of [box.min.x, box.max.x]) {
+        for (const y of [box.min.y, box.max.y]) {
+          for (const z of [box.min.z, box.max.z]) {
+            const p = new THREE.Vector3(x, y, z).project(active);
+            if (p.z > 1 || p.z < -1) {
+              // A corner behind the camera makes the projection meaningless;
+              // say so instead of reporting a plausible-looking number. The
+              // shape stays complete so consumers can read fields unguarded.
+              return {
+                clipped: true as const,
+                widthPct: 0,
+                heightPct: 0,
+                ndc: { minX: 0, maxX: 0, minY: 0, maxY: 0 },
+                box: { min: [0, 0, 0], max: [0, 0, 0] },
+                camera: { position: [0, 0, 0], fov: null, aspect: null },
+                viewport: { width: size.width, height: size.height },
+              };
+            }
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y);
+            maxY = Math.max(maxY, p.y);
+          }
+        }
+      }
+      const perspective = active as THREE.PerspectiveCamera;
+      return {
+        clipped: false as const,
+        /** Share of the viewport width the city's projected bounds span (100 = edge to edge). */
+        widthPct: ((maxX - minX) / 2) * 100,
+        /** Share of the viewport height the city's projected bounds span. */
+        heightPct: ((maxY - minY) / 2) * 100,
+        ndc: { minX, maxX, minY, maxY },
+        box: { min: box.min.toArray(), max: box.max.toArray() },
+        camera: {
+          position: active.position.toArray(),
+          fov: perspective.fov ?? null,
+          aspect: perspective.aspect ?? null,
+        },
+        viewport: { width: size.width, height: size.height },
+      };
+    };
+
+    const target = window as Window & { __city3d?: { coverage: typeof measure; ready: boolean } };
+    target.__city3d = { coverage: measure, ready: true };
+    return () => {
+      if (target.__city3d?.ready) delete target.__city3d;
+    };
+  }, [scene, camera, size, cameraRef]);
+
+  return null;
+}
+
 function findAsset(assets: PlacedAsset[], id: number): PlacedAsset | null {
   return assets.find((asset) => asset.node.id === id) ?? null;
 }
 
-/** Scene background and fog, so distant buildings fade instead of aliasing. */
+/**
+ * Scene background and fog, so distant buildings fade instead of aliasing.
+ *
+ * The fog band tracks the camera distance: at the default shot it sits exactly
+ * where the fixed 190-460 band used to, but a whole-city fit in a portrait
+ * window pulls back much further, and a fixed band would swallow the entire
+ * model in fog -- the city would be "in frame" and invisible.
+ */
 function SceneColor() {
+  const camera = useThree((state) => state.camera);
+  const fog = useRef<THREE.Fog | null>(null);
+  useFrame(() => {
+    if (!fog.current) return;
+    const distance = camera.position.length();
+    fog.current.near = Math.min(190, distance * 0.8);
+    fog.current.far = Math.max(460, distance * 1.5 + 140);
+  });
   return (
     <>
       <color attach="background" args={["#060d18"]} />
-      <fog attach="fog" args={["#060d18", 190, 460]} />
+      <fog ref={fog} attach="fog" args={["#060d18", 190, 460]} />
     </>
   );
 }
@@ -906,6 +1040,7 @@ function CameraRig({
   focus,
   incident,
   fitRequest,
+  resetRequest,
   northRequest,
   reducedMotion,
   controlRef,
@@ -914,6 +1049,8 @@ function CameraRig({
   focus: PlacedAsset | null;
   incident: PlacedAsset | null;
   fitRequest: number;
+  /** Increments to restore the default immersive framing (see City3DProps). */
+  resetRequest: number;
   /** Increments to swing the camera to a due-north heading, keeping range. */
   northRequest: number;
   reducedMotion: boolean;
@@ -921,7 +1058,15 @@ function CameraRig({
 }) {
   const goal = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
   const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
   const size = useThree((state) => state.size);
+  const fov = (camera as THREE.PerspectiveCamera).fov ?? 42;
+  const aspect = size.width / Math.max(size.height, 1);
+  /** Framing bounds: the rendered scene when it has content, the analytic box before that. */
+  const framingBounds = (): CityBounds => {
+    const box = computeContentBox(scene);
+    return box.isEmpty() ? CITY_CONTENT_BOUNDS : boxToBounds(box);
+  };
 
   // React to preset and focus changes by computing a new goal pose. The incident
   // framing wins over the asset framing: if both are set the user asked for the
@@ -943,16 +1088,29 @@ function CameraRig({
   // a sheet-open layout frames correctly too.
   useEffect(() => {
     if (fitRequest === 0) return;
-    const aspect = size.width / Math.max(size.height, 1);
-    const pose = fitPose(mode, aspect, (camera as THREE.PerspectiveCamera).fov ?? 42);
+    const pose = fitPose(mode, aspect, fov, framingBounds());
     goal.current = {
       position: new THREE.Vector3(...pose.position),
       target: new THREE.Vector3(...pose.target),
     };
-    // Only the request counter should re-fit; `size` and `mode` are read at the
-    // moment of the press, not tracked continuously.
+    // Only the request counter should re-fit; `size`, `mode` and the scene are
+    // read at the moment of the press, not tracked continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitRequest]);
+
+  // Reset view: the default immersive framing at the current size -- not the
+  // raw preset distance (which is only an approximation of a good shot) and not
+  // a no-op when the mode happens to already be "perspective". Declared after
+  // the preset/focus effect so it wins when both fire on the same click.
+  useEffect(() => {
+    if (resetRequest === 0) return;
+    const pose = fillPose(mode, aspect, fov, framingBounds());
+    goal.current = {
+      position: new THREE.Vector3(...pose.position),
+      target: new THREE.Vector3(...pose.target),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetRequest]);
 
   // Compass "north-up": swing the camera onto the +Z axis -- which is what puts
   // the city's north edge at the top of the screen -- keeping the current
@@ -972,24 +1130,13 @@ function CameraRig({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [northRequest]);
 
-  // First valid measurement: frame the whole city rather than trusting the
-  // preset distance, which was chosen for one aspect ratio. The preset effect
-  // above has already set a goal on mount; this overwrites it once the viewport
-  // size is real, so the opening frame shows the entire model with margin
-  // instead of cropping the near edge. `fitted` keeps it one-shot: afterwards
-  // only an explicit fit, preset or focus moves the camera.
+  // Opening shot: solved once, from the *rendered* city bounds, the first frame
+  // where both the viewport and the scene are real. A mount-time effect is not
+  // enough -- the graph can arrive a render later, and solving against an empty
+  // scene would frame the analytic fallback box instead of the city actually on
+  // screen. `fitted` keeps it one-shot: afterwards only an explicit fit, reset,
+  // preset or focus moves the camera.
   const fitted = useRef(false);
-  useEffect(() => {
-    if (fitted.current) return;
-    if (size.width < 2 || size.height < 2) return;
-    fitted.current = true;
-    const pose = fillPose(mode, size.width / size.height, (camera as THREE.PerspectiveCamera).fov ?? 42);
-    goal.current = {
-      position: new THREE.Vector3(...pose.position),
-      target: new THREE.Vector3(...pose.target),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.width, size.height]);
 
   useEffect(() => {
     const control = controlRef.current;
@@ -1002,6 +1149,17 @@ function CameraRig({
   useFrame((state, delta) => {
     const camera = state.camera;
     const control = controlRef.current;
+    if (!fitted.current && size.width >= 2 && size.height >= 2) {
+      const box = computeContentBox(scene);
+      if (!box.isEmpty()) {
+        fitted.current = true;
+        const pose = fillPose(mode, aspect, fov, boxToBounds(box));
+        goal.current = {
+          position: new THREE.Vector3(...pose.position),
+          target: new THREE.Vector3(...pose.target),
+        };
+      }
+    }
     const destination = goal.current;
     if (!control || !destination) return;
 

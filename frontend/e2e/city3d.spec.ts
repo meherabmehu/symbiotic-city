@@ -1,5 +1,54 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { expectShell, login, trackConsoleErrors } from "./helpers";
+
+/** What CoverageProbe publishes from inside the canvas (see city-3d.tsx). */
+type SceneCoverage = {
+  clipped: boolean;
+  widthPct: number;
+  heightPct: number;
+  ndc: { minX: number; maxX: number; minY: number; maxY: number };
+};
+
+declare global {
+  interface Window {
+    __city3d?: { ready: boolean; coverage: () => SceneCoverage | null };
+  }
+}
+
+/**
+ * Read the projected-scene coverage once the camera has settled.
+ *
+ * The camera eases toward its goal, so a single reading mid-flight would
+ * measure an arbitrary point of the transition. Settled = two consecutive
+ * readings agree to within a percentage point of width.
+ */
+async function settledCoverage(page: Page): Promise<SceneCoverage> {
+  await page.waitForFunction(() => window.__city3d?.ready === true, null, { timeout: 20_000 });
+  // Let the click's reframe actually start moving before judging stability: on
+  // a software renderer two samples can land inside a single frame, and a
+  // camera that has not moved yet looks perfectly "settled" at the old pose.
+  await page.waitForTimeout(1_500);
+  let previous: { width: number; position: number[] } | null = null;
+  let stable = 0;
+  let reading: SceneCoverage | null = null;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    reading = await page.evaluate(() => window.__city3d?.coverage() ?? null);
+    if (reading && !reading.clipped) {
+      const position = reading as unknown as { camera?: { position: number[] } } & SceneCoverage;
+      const current = { width: reading.widthPct, position: position.camera?.position ?? [] };
+      const moved =
+        previous &&
+        (Math.abs(current.width - previous.width) > 0.5 ||
+          current.position.some((value, index) => Math.abs(value - (previous!.position[index] ?? value)) > 1));
+      if (moved || !previous) stable = 0;
+      else stable += 1;
+      previous = current;
+      if (stable >= 2) return reading;
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`camera never settled: ${JSON.stringify(reading)}`);
+}
 
 /**
  * The 3D twin in a real browser.
@@ -380,6 +429,41 @@ test.describe("3d city", () => {
     // Expanding the panel changes the viewport; the scene must survive it.
     await page.getByRole("button", { name: /expand/i }).click();
     await expect(page.locator("canvas").first()).toBeVisible();
+  });
+
+  test("the rendered city fills the viewport, measured from projected scene geometry", async ({ page }) => {
+    // Regression test for "tiny city in a correctly-sized canvas": canvas
+    // dimensions prove nothing about framing, so this reads the in-page
+    // CoverageProbe -- the world bounds of the rendered city, projected through
+    // the live camera -- and asserts the composition itself.
+    await login(page, "operator");
+    await page.goto("/twin");
+    await expectShell(page);
+    await expect(page.locator('[data-testid="city3d-canvas"] canvas').first()).toBeVisible({ timeout: 20_000 });
+
+    // Default immersive shot: the brief's 85-95% horizontal band, and enough
+    // vertical coverage that the city is not a thin strip in a tall frame.
+    const initial = await settledCoverage(page);
+    expect(initial.widthPct, `initial width ${initial.widthPct.toFixed(1)}%`).toBeGreaterThanOrEqual(85);
+    expect(initial.widthPct, `initial width ${initial.widthPct.toFixed(1)}%`).toBeLessThanOrEqual(95);
+    expect(initial.heightPct, `initial height ${initial.heightPct.toFixed(1)}%`).toBeGreaterThanOrEqual(60);
+
+    // Fit entire city: every corner of the rendered content inside the frame --
+    // a deliberately wider shot than the default, not the same framing twice.
+    await page.getByRole("button", { name: /fit city/i }).click();
+    const fit = await settledCoverage(page);
+    expect(Math.abs(fit.ndc.minX), "fit left").toBeLessThanOrEqual(0.98);
+    expect(fit.ndc.maxX, "fit right").toBeLessThanOrEqual(0.98);
+    expect(fit.ndc.maxY, "fit far").toBeLessThanOrEqual(0.98);
+    expect(Math.abs(fit.ndc.minY), "fit near").toBeLessThanOrEqual(0.98);
+    expect(fit.widthPct, "fit must be wider than the immersive shot").toBeLessThan(initial.widthPct);
+
+    // Reset view restores the immersive shot even though the camera mode is
+    // already "perspective" -- reset used to be a no-op in that state.
+    await page.getByRole("button", { name: /reset view/i }).click();
+    const reset = await settledCoverage(page);
+    expect(reset.widthPct, `reset width ${reset.widthPct.toFixed(1)}%`).toBeGreaterThanOrEqual(85);
+    expect(reset.widthPct, `reset width ${reset.widthPct.toFixed(1)}%`).toBeLessThanOrEqual(95);
   });
 
   test("moves the camera from the keyboard, not only the pointer", async ({ page }) => {

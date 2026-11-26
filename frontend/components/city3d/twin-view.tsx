@@ -10,7 +10,7 @@
  * missing entirely.
  */
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useRef, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Box, Frame, Layers, Maximize2, Minimize2, RotateCcw, Video } from "lucide-react";
 import {
   City3D,
@@ -89,6 +89,12 @@ export function TwinView({
   const [statusFilter, setStatusFilter] = useState("all");
   // A counter, not a boolean: pressing "Fit city" twice should fit twice.
   const [fitRequest, setFitRequest] = useState(0);
+  // "Reset view" and Expand both mean "give me the default shot again" -- the
+  // second at the new panel size -- so they share a reframe counter.
+  const [resetRequest, setResetRequest] = useState(0);
+  // What the last framing command asked for, so Expand can re-apply it at the
+  // new panel size instead of silently swapping one intent for the other.
+  const framingIntent = useRef<"fill" | "whole">("fill");
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [showScenery, setShowScenery] = useState(true);
   const [expanded, setExpanded] = useState(false);
@@ -103,9 +109,22 @@ export function TwinView({
     return { ...graph, nodes: graph.nodes.filter((node) => node.status === statusFilter) };
   }, [graph, statusFilter]);
 
+  const applyMode = useCallback((next: CameraMode) => {
+    // A preset is a *direction*, and the raw preset distance was tuned for one
+    // aspect ratio: at 1024 it crops, at 1920 it leaves gaps. So a preset click
+    // also re-solves the distance for the viewport actually on screen --
+    // immersive framing for the angled views, the whole grid for top-down.
+    framingIntent.current = next === "top" ? "whole" : "fill";
+    setMode(next);
+    if (next === "top") setFitRequest((count) => count + 1);
+    else setResetRequest((count) => count + 1);
+  }, []);
+
   const resetView = useCallback(() => {
     setFocusId(null);
+    framingIntent.current = "fill";
     setMode("perspective");
+    setResetRequest((count) => count + 1);
   }, []);
 
   const select = useCallback(
@@ -172,7 +191,7 @@ export function TwinView({
             return (
               <button
                 key={key}
-                onClick={() => setMode(key)}
+                onClick={() => applyMode(key)}
                 aria-pressed={mode === key}
                 title={CAMERA_MODES[key].description}
                 className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] transition ${
@@ -193,7 +212,10 @@ export function TwinView({
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setFitRequest((value) => value + 1)}
+          onClick={() => {
+            framingIntent.current = "whole";
+            setFitRequest((value) => value + 1);
+          }}
           title="Frame the whole city in the panel, whatever its size"
         >
           <Frame className="h-3.5 w-3.5" aria-hidden /> Fit city
@@ -231,7 +253,24 @@ export function TwinView({
             ))}
           </Select>
 
-          <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setExpanded((v) => !v);
+              // The panel just changed height: re-apply the last framing intent
+              // at the new size. The bump is deferred two frames so the panel's
+              // layout and the canvas's ResizeObserver have both landed first --
+              // otherwise the solver reads the OLD aspect and "re-solves" the
+              // distance the camera already has, which is not a reframe at all.
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => {
+                  if (framingIntent.current === "whole") setFitRequest((count) => count + 1);
+                  else setResetRequest((count) => count + 1);
+                }),
+              );
+            }}
+          >
             {expanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden />}
             {expanded ? "Fit panel" : "Expand"}
           </Button>
@@ -307,12 +346,13 @@ export function TwinView({
           showScenery={showScenery}
           activeIncidents={activeIncidents}
           fitRequest={fitRequest}
+          resetRequest={resetRequest}
           onStats={setStats}
           onToggleZones={() => setShowZones((value) => !value)}
           onToggleEdges={() => setShowEdges((value) => !value)}
           quality={quality}
           mode={mode}
-          onModeChange={setMode}
+          onModeChange={applyMode}
           focusId={focusId}
           height={expanded ? Math.max(height, 720) : height}
         />
