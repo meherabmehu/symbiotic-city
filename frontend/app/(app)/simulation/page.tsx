@@ -230,7 +230,9 @@ function SimulationLab() {
         ]}
       />
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+      {/* grid-cols-1 base: below xl the implicit auto track sized itself to the
+          asset picker's nowrap rows and overflowed a phone viewport. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
         <div className="space-y-4">
           {tab === "setup" ? (
             <>
