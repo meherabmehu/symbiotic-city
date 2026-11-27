@@ -56,6 +56,27 @@ test.describe("operator journey", () => {
     await page.getByRole("button", { name: /^(submit|report|create)/i }).last().click();
 
     await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 });
+
+    // Leave no open incident behind. The API allows one open incident per
+    // (asset, category); a leaked report would eventually exhaust every free
+    // asset for this test's own precondition and would also block
+    // scripts/smoke.py, which reports on a fixed asset.
+    await page.evaluate(async (reportedTitle) => {
+      const list = await (
+        await fetch("/api/incidents?page_size=100", { credentials: "include" })
+      ).json();
+      const mine = ((list.data ?? []) as { id: number; title: string; resolved_at: string | null }[]).find(
+        (incident) => incident.title === reportedTitle && incident.resolved_at === null,
+      );
+      if (!mine) return;
+      const csrf = document.cookie.match(/symbiotic_csrf=([^;]+)/)?.[1] ?? "";
+      await fetch(`/api/incidents/${mine.id}/transition`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ status: "cancelled", note: "E2E cleanup: released for the next run" }),
+      });
+    }, title);
   });
 
   test("the digital twin renders and is keyboard navigable", async ({ page }) => {
