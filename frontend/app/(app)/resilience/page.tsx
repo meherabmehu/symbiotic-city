@@ -55,6 +55,7 @@ import {
 import { ZoneRiskMap, bandToken, type HeatAsset, type HeatZone } from "@/components/zone-risk-map";
 import { api, errorMessage, qs } from "@/lib/api";
 import { AiFeatureCard } from "@/components/ai/ai-feature-card";
+import { ScenarioCompareAi } from "@/components/ai/scenario-compare-ai";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime, formatNumber, percent, titleCase } from "@/lib/format";
 import { useAsync } from "@/lib/hooks";
@@ -1416,7 +1417,10 @@ export default function ResiliencePage() {
         {tab === "exposure" ? (
           <ExposureTab canPlan={canPlan} />
         ) : tab === "futures" ? (
-          <FuturesTab />
+          <div className="space-y-4">
+            <ScenarioCompareAi />
+            <FuturesTab />
+          </div>
         ) : tab === "tradeoffs" ? (
           <TradeoffsTab canPlan={canPlan} />
         ) : tab === "investment" ? (
