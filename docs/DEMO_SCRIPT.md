@@ -276,3 +276,23 @@ Tick every line before uploading.
 | Approve returns `409` with no compensation | The plan is genuinely infeasible | Read the explanation panel — this is correct behaviour |
 | Fault never fires | Faults scheduled after approval | Inject before approving |
 | Twin is blank | Container measured zero width | Reload; the canvas paints on the first real measurement |
+
+---
+
+## 11 · Flagship AI Decision Intelligence Walkthrough (3 minutes)
+
+**Thesis question:** *"If the central power station fails, what happens, how does it compare with a substation failure, and what is our best recovery strategy?"*
+
+1. **AI Disaster Commander (`/dashboard` → Disaster Commander tab):**
+   - Click **"If PS-01 fails, what happens to Aurora Vale, and what should we do first?"**
+   - Point at the live read-only metrics strip (failed assets, population at risk, severity band, CP-SAT coverage) and the 7 grounded sections.
+   - Click **"Highlight in 3D Twin"** to jump to `/twin?highlight=...` showing the exact failed assets lit in the 3D city model.
+2. **Multi-Scenario AI Reasoning (`/resilience` → What-if futures → Multi-Scenario AI Reasoning):**
+   - Click **"Compare PS-01 failure versus SS-01 failure"**.
+   - Point at the side-by-side scenario cards, the backend-computed comparison table (with explicit `Higher Impact` / `tied` labels), and the grounded trade-off explanation.
+3. **Explainable Recovery Intelligence (`/optimization/plans/{id}`):**
+   - Click **"Explain plan & compare alternatives"**.
+   - Point at the **Solver Optimality & Selection** card (`optimal` vs `feasible`), **Limiting Resources**, and **Read-Only Alternative CP-SAT Strategies** (`priority_first`, `coverage_max`, `resource_conservative`).
+   - Emphasise that AI never mutates the database or approves plans; human approval remains explicit.
+4. **Graceful Groq Fallback:**
+   - Every AI card displays its exact provider badge (`LLM (Groq)` vs `rule-based (...)`). If Groq hits rate limits or truncates (`finish_reason == "length"`), the platform discards partial output and displays the complete deterministic summary with an explicit notice.
