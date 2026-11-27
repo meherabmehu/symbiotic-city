@@ -9,7 +9,7 @@ This orphan branch keeps binaries **out of the main repository history**.
 | File | Size (bytes) | SHA-256 |
 |---|---|---|
 | `SYMBIOTIC_CITY_Competition_FINAL.mp4` | 38,710,091 | `feaea30af7df76a53e7f550769f0b4fae587fa848c778465e6e8afedfe0b8148` |
-| `SYMBIOTIC_CITY_Competition_FINAL.srt` | 11,000± | `56f860c828f815abb26139942a01ed912ae11661713ee268c07f14fd52184066` |
+| `SYMBIOTIC_CITY_Competition_FINAL.srt` | 12,088 | `56f860c828f815abb26139942a01ed912ae11661713ee268c07f14fd52184066` |
 
 ## Specs
 
