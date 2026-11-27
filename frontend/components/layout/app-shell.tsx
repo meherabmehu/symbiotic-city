@@ -314,7 +314,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   ) : null}
                 </button>
                 {bellOpen ? (
-                  <div className="absolute right-0 top-full z-30 mt-2 w-80 overflow-hidden rounded-xl border border-white/10 bg-navy-900/98 shadow-glass">
+                  <div className="fixed left-4 right-4 top-16 z-30 max-h-[min(70dvh,24rem)] overflow-y-auto rounded-xl border border-white/10 bg-navy-900/98 shadow-glass sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80">
                     <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-400">Notifications</p>
                       <Link href="/notifications" className="text-[11px] text-accent hover:underline">
