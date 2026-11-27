@@ -78,6 +78,26 @@ test.describe("responsive layout", () => {
     });
   }
 
+  test("notification popover stays within narrow phone viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 700 });
+    await login(page, "operator");
+    await page.goto("/dashboard");
+    await expectShell(page);
+
+    await page.getByRole("button", { name: /^Notifications/ }).click();
+    const panel = page.locator("header").getByText("Notifications", { exact: true });
+    await expect(panel).toBeVisible();
+
+    const bounds = await panel.locator("..").boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(321);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+
   test("navigation is reachable on a small screen", async ({ page }) => {
     await login(page);
     // Exact label: the closed drawer also contains a "Close navigation" button
