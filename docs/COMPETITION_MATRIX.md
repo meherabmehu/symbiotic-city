@@ -38,7 +38,7 @@ reason is named and the claim is downgraded rather than inflated.
 
 | Evidence | Result |
 | --- | --- |
-| Backend suite, SQLite | **331 passed, 11 skipped** |
+| Backend suite, SQLite | **336 passed, 11 skipped** |
 | Backend suite, PostgreSQL 16 (CI) | **Passed, 0 skipped** |
 | End-to-end smoke against live Render API | **26/26 passed** |
 | Frontend unit suite (Vitest) | **10 files, 123 tests passed** |

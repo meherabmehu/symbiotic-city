@@ -49,7 +49,7 @@ SYMBIOTIC CITY answers three questions before the incident, and one after it:
 | **Workflow console** | The 10-step recovery pipeline, per-step events, fault injection, retry, and the compensation ledger. |
 | **Analytics** | Trends, category and severity breakdowns, resource utilisation, recovery performance, CSV export. |
 | **Admin** | Users and roles, permissions matrix, system settings, audit log. |
-| **AI Intelligence** | Five Groq-powered assistants (City Copilot, Incident Explanation, Recovery Advisor, What-If Extraction, Resilience Report) with deterministic rule-based fallbacks, citation links, and truncation/grounding guards. |
+| **AI Intelligence** | Eight Groq-powered decision-intelligence capabilities (City Copilot, AI Disaster Commander, Multi-Scenario AI Reasoning, Incident Explanation, Explainable Recovery Intelligence with solver alternatives, What-If Extraction, Resilience Report) with deterministic rule-based fallbacks, citation links, and truncation/grounding guards. |
 
 ## Architecture at a glance
 
@@ -159,10 +159,10 @@ backend/
     models/          30 tables across identity, infrastructure, operations,
                      simulation, optimization, workflow, system
   migrations/        Alembic revisions (env.py renders custom UTCDateTime)
-  tests/             331+ tests: engines, API contract, RBAC, workflow e2e,
+  tests/             336+ tests: engines, API contract, RBAC, workflow e2e,
                      AI features, migrations, PostgreSQL parity
 frontend/
-  app/               27 routes: landing, auth, shell, and every operational screen
+  app/               29 routes: landing, auth, shell, and every operational screen
   components/        ui primitives, 3D city (city3d/), twin canvas fallback, charts, layout
   lib/               typed API client, session context, formatters, city layout model,
                      replay and time-travel maths

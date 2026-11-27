@@ -108,7 +108,7 @@ review, and no authorship was altered.
 | Check | Result |
 | --- | --- |
 | `scripts/smoke.py https://symbiotic-city-api.onrender.com/api` | **26/26 passed** (catalogue, simulation, CP-SAT feasible + infeasible, incident → workflow → dispatch → engineer → verify → resolve, analytics/CSV, RBAC refusals) |
-| Live Groq AI endpoints (5 features) | All 5 responded with HTTP 200/201; Copilot, Incident Explain, What-If Extract, and Resilience Report returned live `LLM (Groq)` responses; Plan Explain triggered `finish_reason == "length"` truncation guard and fell back cleanly to deterministic summary with honest notice |
+| Live Groq AI endpoints (8 endpoints) | Original 5 + 3 Decision Intelligence endpoints (`/ai/commander`, `/ai/scenarios/compare`, `/ai/plans/{id}/explain` with alternatives) verified live on Render with `LLM (Groq)` responses |
 | Frontend landing & login page | Served HTTP 200 from https://symbiotic-city-web.onrender.com |
 
 **Caveat:** Render Free Tier instances spin down after inactivity; the first request after idle may take ~30–50 seconds to cold-start.
@@ -130,7 +130,7 @@ review, and no authorship was altered.
 
 | Area | Result |
 | --- | --- |
-| Backend suite, SQLite | **331 passed, 11 skipped** (0 failed) |
+| Backend suite, SQLite | **336 passed, 11 skipped** (0 failed) |
 | Backend suite, PostgreSQL 16 (CI) | **Passed with zero skips** |
 | Smoke against live Render API | **26/26 passed** |
 | Frontend unit tests (Vitest) | **10 files, 123 tests passed** |
@@ -141,7 +141,7 @@ review, and no authorship was altered.
 | Browser suite (CI, Chromium + Pixel 7) | **Passed in CI** |
 | Security | bcrypt, CSRF, RBAC (4 roles × 28 permissions), rate limiting, audit log |
 | Production config | cookie Secure enforced, CORS wildcard withdrawn, weak secret refused |
-| AI features (PRs #10, #11) | Async/await across all 5 endpoints, `react-markdown` + `remark-gfm`, unique citation keys, truncation detection, resilience report grounding checks |
+| AI features (PRs #10, #11, #13) | Async/await across all 8 endpoints, `react-markdown` + `remark-gfm`, unique citation keys, truncation detection, resilience grounding checks, AI Disaster Commander, Multi-Scenario AI Reasoning, and Explainable Recovery Intelligence (demo script §11) |
 
 ### Defects found and fixed during this audit
 
