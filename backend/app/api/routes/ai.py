@@ -37,13 +37,16 @@ from app.models.infrastructure import InfrastructureAsset as Asset
 from app.models.operations import Incident, RepairTask
 from app.models.optimization import OptimizationPlan
 from app.schemas.ai import (
+    CommanderRequest,
     CopilotRequest,
     IncidentExplainRequest,
     PlanExplainRequest,
     ResilienceReportRequest,
+    ScenarioCompareRequest,
     WhatIfExtractRequest,
 )
 from app.services.ai import SYSTEM_GUARD, get_provider, provider_label, untrusted
+from app.services.ai import decision as ai_decision
 from app.services.ai import features as ai_features
 from app.services.ai.provider import AiError, AiReply, AiTruncated
 
@@ -454,33 +457,58 @@ async def explain_plan(
     explanation = plan_dict.get("explanation") or {}
     status = str(plan.solution_status or "unknown")
     status_meaning = ai_features.solver_status_meaning(status)
+    reasoning = ai_decision.build_plan_reasoning(db, plan, plan_dict)
+    alternatives = (
+        ai_decision.generate_alternative_plans(db, plan, plan_dict)
+        if payload.include_alternatives
+        else []
+    )
+    compact_assignments = [
+        {
+            "asset": f"{a.get('asset_code')} ({a.get('asset_name')})",
+            "resource": f"{a.get('resource_code')} ({a.get('resource_name')})",
+            "quantity": a.get("quantity"),
+            "cost": a.get("estimated_cost"),
+        }
+        for a in (plan_dict.get("assignments") or [])
+    ]
     advisor_context = {
-        "plan": plan_dict,
+        "plan_code": plan.code,
+        "status": plan.status,
         "solver_reading": {
             "solution_status": status,
             "status_meaning": status_meaning,
             "objective_value": plan.objective_value,
-            "objective_value_is_a_solver_score_not_a_business_proof": True,
+            "coverage_percent": plan.coverage_percent,
+            "wall_ms": plan.solver_wall_ms,
         },
-        # Exactly the constraints the request was encoded with -- the only
-        # bounds this endpoint can honestly talk about.
-        "recorded_constraints": explanation.get("constraints") or {},
-        "recorded_resource_usage": explanation.get("resource_usage") or {},
+        "assignments": compact_assignments,
         "unserved_demands": explanation.get("unserved") or [],
+        "limiting_resources": reasoning["limiting_resources"],
+        "recorded_constraints": explanation.get("constraints") or {},
+        "alternatives": [
+            {
+                "strategy": alt["strategy"],
+                "status": alt["status"],
+                "coverage_percent": alt["coverage_percent"],
+                "estimated_cost": alt["estimated_cost"],
+                "added_vs_saved": alt["added_vs_saved"],
+                "dropped_vs_saved": alt["dropped_vs_saved"],
+            }
+            for alt in alternatives
+        ],
     }
     context = ai_features.fenced_block("solver plan", [advisor_context])
     system = (
         f"{_lang_instruction(payload.lang)} You are the recovery advisor. Explain the "
         "stored CP-SAT plan without rerunning or re-solving it. "
         f"Solver status is '{status}': {status_meaning} "
-        "The objective value is a solver score; it is NOT proof that a business objective "
-        "was globally maximised. Only the keys inside recorded_constraints are real "
-        "constraints of this run -- never invent penalties, assignment caps, mobilisation "
-        "rules, horizon feasibility or solver bounds that are absent there. Report every "
-        "saved assignment and any coverage gap. Keep the answer complete and under 450 "
-        "words: prefer a short complete answer over a long truncated one."
+        "The objective value is a solver score, NOT proof of global business optimality. "
+        "Only cite keys inside recorded_constraints. Cover: why this allocation was chosen, "
+        "prioritised vs unserved demands, limiting resources, and how any listed solver "
+        "alternatives differ. Keep the answer complete and under 380 words."
     )
-    outcome = await _chat(_messages(system, context), max_tokens=1200)
+    outcome = await _chat(_messages(system, context), max_tokens=1800)
     reply_text = outcome.text
     if reply_text is None:
         reply_text = ai_features.plan_fallback(plan_dict, reason=fallback_reason(outcome))
@@ -508,6 +536,8 @@ async def explain_plan(
                 "solver_wall_ms": plan.solver_wall_ms,
                 "recorded_constraints": advisor_context["recorded_constraints"],
             },
+            "reasoning": reasoning,
+            "alternatives": alternatives,
             "citations": citations,
         }
     )
@@ -947,3 +977,230 @@ def report_grounding_problems(text: str, stats: dict[str, Any]) -> list[str]:
                 "ranking entry with no record in active_incident_records"
             )
     return problems
+
+
+# ------------------------------------------------------- AI Disaster Commander
+
+
+@router.post("/ai/commander")
+async def disaster_commander(
+    payload: CommanderRequest,
+    db: DbSession,
+    user: CurrentUser,
+    _gate=Depends(require_permissions("simulation:read")),
+):
+    """AI Disaster Commander: natural-language query -> live asset resolution ->
+    read-only deterministic cascade simulation + CP-SAT recovery preview ->
+    grounded Groq explanation with deterministic fallback."""
+    _rate_limit(user.id)
+    resolution = ai_decision.extract_assets_from_text(db, payload.question)
+    if resolution["status"] != "resolved":
+        status = resolution["status"]
+        if status == "unknown":
+            msg = (
+                f"Unknown asset code(s): {', '.join(resolution['unknown_codes'])}. "
+                "Select a valid asset from Aurora Vale below."
+            )
+        elif status == "ambiguous":
+            names = ", ".join(f"{c['code']} ({c['name']})" for c in resolution["candidates"][:5])
+            msg = f"Multiple assets match your question ({names}). Pick a specific asset code to simulate."
+        else:
+            msg = "Please name an infrastructure asset (for example PS-01, SS-01, or HO-01) to run a disaster simulation."
+        return ok(
+            {
+                "reply": msg,
+                "lang": payload.lang,
+                "provider": provider_label(has_key=False),
+                "truncated": False,
+                "notice": None,
+                "resolution": resolution,
+                "sections": None,
+                "simulation": None,
+                "recovery_preview": None,
+                "next_actions": [],
+                "citations": [
+                    ai_features.citation("asset", c["id"], f"{c['code']} — {c['name']}", c["category"])
+                    for c in resolution["candidates"][:6]
+                ],
+            }
+        )
+
+    evidence = ai_decision.build_commander_evidence(
+        db,
+        resolved_assets=resolution["assets"],
+        failure_mode=payload.failure_mode,
+        cascade_threshold=payload.cascade_threshold,
+        max_depth=payload.max_depth,
+    )
+    sections = ai_decision.commander_sections_from_evidence(evidence)
+    sim = evidence["simulation"]
+    rec = evidence["recovery_preview"]
+
+    compact_context = {
+        "question": payload.question,
+        "target_assets": evidence["target_assets"],
+        "target_criticality": evidence["target_criticality"],
+        "active_incidents_on_targets": evidence["active_incidents_on_targets"],
+        "simulation_summary": sim["summary"],
+        "directly_failed": [e["code"] for e in sim["directly_failed"]],
+        "cascading_failed": [e["code"] for e in sim["cascading_failed"]],
+        "critical_services_down": sim["critical_services_down"],
+        "recovery_preview": {
+            "status": rec["status"],
+            "coverage_percent": rec["coverage_percent"],
+            "assignments": rec["assignments"][:6],
+            "unserved_count": len(rec["unserved"]),
+            "limiting_resources": rec["limiting_resources"],
+        },
+        "assumptions": evidence["assumptions"],
+    }
+    system = (
+        f"{_lang_instruction(payload.lang)} You are the AI Disaster Commander for Aurora Vale. "
+        "Answer using ONLY the simulated and solver figures in the context. Format with these "
+        "sections: Situation Summary, Affected Infrastructure, Cascading Impact, Population at Risk, "
+        "Recommended Immediate Actions, Resource Constraints, Evidence and Limitations. "
+        "Do not invent failures, population figures, or solver results. Explicitly state that no "
+        "database writes or resource reservations were executed. Keep under 420 words."
+    )
+    outcome = await _chat(_messages(system, ai_features.fenced_block("commander evidence", [compact_context])), max_tokens=1600)
+    reply_text = outcome.text
+    if reply_text is None:
+        reply_text = ai_decision.commander_fallback(evidence, lang=payload.lang, reason=fallback_reason(outcome))
+
+    citations = [
+        ai_features.citation("asset", a["id"], f"{a['code']} — {a['name']}", f"target ({a['category']})")
+        for a in resolution["assets"]
+    ]
+    for e in sim["cascading_failed"][:5]:
+        citations.append(
+            ai_features.citation("asset", e["asset_id"], f"{e['code']} — {e['name']}", f"cascading failure depth {e['depth']}")
+        )
+    for inc in evidence["active_incidents_on_targets"][:3]:
+        citations.append(
+            ai_features.citation("incident", inc["id"], f"{inc['code']} — {inc['title']}", inc["status"])
+        )
+
+    target_codes = ",".join(a["code"] for a in resolution["assets"])
+    next_actions = [
+        {"label": "Open in Simulation Lab", "href": f"/simulation?asset={target_codes}"},
+        {"label": "Open Recovery Planner", "href": "/optimization"},
+        {"label": "Highlight in 3D Digital Twin", "href": f"/twin?highlight={','.join(str(i) for i in sim['failed_asset_ids'])}"},
+    ]
+
+    return ok(
+        {
+            "reply": reply_text,
+            "lang": payload.lang,
+            **outcome.payload(),
+            "resolution": resolution,
+            "sections": sections,
+            "simulation": sim,
+            "recovery_preview": rec,
+            "next_actions": next_actions,
+            "citations": citations,
+        }
+    )
+
+
+# ------------------------------------------------ Multi-Scenario AI Reasoning
+
+
+@router.post("/ai/scenarios/compare")
+async def compare_scenarios_ai(
+    payload: ScenarioCompareRequest,
+    db: DbSession,
+    user: CurrentUser,
+    _gate=Depends(require_permissions("simulation:read")),
+):
+    """Multi-Scenario AI Reasoning: evaluates 2–3 failure scenarios
+    independently in-memory using the deterministic cascade engine, computes
+    metric deltas on the backend, and narrates trade-offs via Groq."""
+    _rate_limit(user.id)
+    scenario_defs: list[dict[str, Any]] = []
+
+    if payload.scenarios:
+        assets = ai_decision._load_active_assets(db)
+        by_code = {a.code.upper(): a for a in assets}
+        for spec in payload.scenarios:
+            matched = []
+            missing = []
+            for code in spec.asset_codes:
+                a = by_code.get(code.strip().upper())
+                if a:
+                    matched.append(ai_decision._asset_brief(a))
+                else:
+                    missing.append(code)
+            if missing or not matched:
+                raise ApiError(
+                    f"Unknown asset code(s) in scenario: {', '.join(missing) or 'none provided'}.",
+                    status_code=422,
+                    code="invalid_asset",
+                )
+            scenario_defs.append(
+                {
+                    "label": spec.label or ", ".join(a["code"] for a in matched),
+                    "assets": matched,
+                    "failure_mode": spec.failure_mode,
+                    "cascade_threshold": spec.cascade_threshold,
+                    "max_depth": spec.max_depth,
+                }
+            )
+    elif payload.question:
+        scenario_defs = ai_decision.parse_comparison_question(db, payload.question)
+        if len(scenario_defs) < 2:
+            return ok(
+                {
+                    "reply": "Please specify at least two valid asset codes to compare (for example: 'Compare PS-01 vs SS-01').",
+                    "lang": payload.lang,
+                    "provider": provider_label(has_key=False),
+                    "truncated": False,
+                    "notice": None,
+                    "scenarios": [],
+                    "metrics_table": [],
+                    "set_differences": {},
+                    "citations": [],
+                }
+            )
+    else:
+        raise ApiError("Provide either 'question' or 'scenarios'.", status_code=422, code="validation_error")
+
+    comparison = ai_decision.compare_scenarios_readonly(db, scenario_defs)
+    compact = {
+        "scenarios": [
+            {
+                "label": s["label"],
+                "metrics": s["metrics"],
+                "severity_band": s["severity_band"],
+                "critical_services_down": s["critical_services_down"],
+            }
+            for s in comparison["scenarios"]
+        ],
+        "metrics_table": comparison["metrics_table"],
+        "set_differences": comparison["set_differences"],
+    }
+    system = (
+        f"{_lang_instruction(payload.lang)} Compare the simulated failure scenarios using ONLY "
+        "the computed metrics_table and set_differences. State which scenario has higher impact "
+        "per metric (or 'tied'). Never invent an overall disaster score. Keep under 360 words."
+    )
+    outcome = await _chat(_messages(system, ai_features.fenced_block("scenario comparison", [compact])), max_tokens=1400)
+    reply_text = outcome.text
+    if reply_text is None:
+        reply_text = ai_decision.compare_fallback(comparison, lang=payload.lang, reason=fallback_reason(outcome))
+
+    citations = []
+    for s in comparison["scenarios"]:
+        for a in s["target_assets"]:
+            citations.append(
+                ai_features.citation("asset", a["id"], f"{a['code']} — {a['name']}", f"scenario {s['label']}")
+            )
+
+    return ok(
+        {
+            "reply": reply_text,
+            "lang": payload.lang,
+            **outcome.payload(),
+            **comparison,
+            "citations": citations,
+        }
+    )
