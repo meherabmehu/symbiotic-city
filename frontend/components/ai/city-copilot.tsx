@@ -152,7 +152,12 @@ export function CityCopilot() {
           className="min-w-0 flex-1 rounded-lg border border-white/10 bg-navy-950/60 px-3 py-2 text-sm text-white placeholder:text-ink-500 focus:border-accent/50 focus:outline-none"
           maxLength={1200}
         />
-        <Button type="submit" variant="primary" disabled={activeCall.loading || !message.trim()} aria-label="Ask the assistant">
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={activeCall.loading || !message.trim()}
+          aria-label={mode === "commander" ? "Ask the commander" : "Ask the copilot"}
+        >
           <Send className="h-4 w-4" aria-hidden />
         </Button>
       </form>
