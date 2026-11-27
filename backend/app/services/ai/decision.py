@@ -610,6 +610,7 @@ def compare_scenarios_readonly(
     crit_by_id = {r["asset_id"]: r["criticality_index"] for r in crit_data.get("ranking", [])}
 
     evaluated: list[dict[str, Any]] = []
+    used_labels: set[str] = set()
     for idx, sc in enumerate(scenario_defs, start=1):
         asset_ids = [a["id"] for a in sc["assets"]]
         sim = simulate_asset_failure_readonly(
@@ -625,10 +626,19 @@ def compare_scenarios_readonly(
         crit_vals = [crit_by_id[aid] for aid in asset_ids if aid in crit_by_id]
         max_crit = round(max(crit_vals), 1) if crit_vals else 0.0
         s = sim["summary"]
+        # Labels key the metrics_table values; two scenarios sharing a label
+        # would silently collapse to one column and display the wrong numbers.
+        base_label = sc.get("label") or ", ".join(a["code"] for a in sc["assets"])
+        label = base_label
+        dedup = 2
+        while label in used_labels:
+            label = f"{base_label} ({dedup})"
+            dedup += 1
+        used_labels.add(label)
         evaluated.append(
             {
                 "key": f"S{idx}",
-                "label": sc.get("label") or ", ".join(a["code"] for a in sc["assets"]),
+                "label": label,
                 "target_assets": sc["assets"],
                 "failure_mode": sc.get("failure_mode", "total_failure"),
                 "metrics": {

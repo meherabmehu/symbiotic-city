@@ -172,6 +172,93 @@ def test_multi_scenario_compare_and_ties_and_readonly(client, monkeypatch):
     assert resp_bad.status_code == 422
 
 
+def test_compare_duplicate_labels_keep_one_column_per_scenario(client):
+    """Regression: two scenarios sharing a label must not collapse the
+    metrics_table into one column (that displayed the wrong numbers)."""
+    csrf = _login(client, "analyst@symbiotic.city", "Analyst#2026")
+    resp = client.post(
+        "/api/ai/scenarios/compare",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "scenarios": [
+                {"label": "Downtown", "asset_codes": ["PS-01"]},
+                {"label": "Downtown", "asset_codes": ["SS-01"]},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    labels = [sc["label"] for sc in data["scenarios"]]
+    assert len(labels) == 2
+    assert len(set(labels)) == 2, f"labels must stay distinct: {labels}"
+
+    for row in data["metrics_table"]:
+        assert set(row["values"]) == set(labels), row
+        for sc in data["scenarios"]:
+            assert row["values"][sc["label"]] == sc["metrics"][row["metric"]], (
+                row["metric"],
+                sc["label"],
+            )
+
+    # Same property through the natural-language path (duplicate codes).
+    resp2 = client.post(
+        "/api/ai/scenarios/compare",
+        headers={"X-CSRF-Token": csrf},
+        json={"question": "Compare PS-01 vs PS-01"},
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()["data"]
+    labels2 = [sc["label"] for sc in data2["scenarios"]]
+    assert len(set(labels2)) == len(labels2) == 2, labels2
+    for row in data2["metrics_table"]:
+        assert set(row["values"]) == set(labels2), row
+
+
+def test_validation_labels_do_not_blame_a_missing_key_when_one_exists(client, monkeypatch):
+    """A configured-but-failing provider must not produce the label
+    'no LLM key configured' -- that sends operators looking for a
+    configuration that already exists."""
+
+    class FailingProvider:
+        async def chat(self, messages, *, max_tokens=1200, temperature=0.2):
+            raise AiError("provider unreachable")
+
+    monkeypatch.setattr("app.api.routes.ai.get_provider", lambda: FailingProvider())
+    csrf = _login(client, "operator@symbiotic.city", "Operator#2026")
+
+    resp = client.post(
+        "/api/ai/commander",
+        headers={"X-CSRF-Token": csrf},
+        json={"question": "If ZZ-99 fails, what happens?"},
+    )
+    assert resp.status_code == 200
+    provider = resp.json()["data"]["provider"]
+    assert provider.startswith("rule-based"), provider
+    assert "no LLM key configured" not in provider
+
+    resp = client.post(
+        "/api/ai/whatif/extract",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "What if ZZ-99 fails completely?"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["validation"]["ok"] is False
+    provider = data["provider"]
+    assert provider.startswith("rule-based"), provider
+    assert "no LLM key configured" not in provider
+
+    resp = client.post(
+        "/api/ai/scenarios/compare",
+        headers={"X-CSRF-Token": csrf},
+        json={"question": "Compare nothing at all"},
+    )
+    assert resp.status_code == 200
+    provider = resp.json()["data"]["provider"]
+    assert provider.startswith("rule-based"), provider
+    assert "no LLM key configured" not in provider
+
+
 def test_explainable_recovery_alternatives_and_truncation_and_rbac(client, monkeypatch):
     csrf_an = _login(client, "analyst@symbiotic.city", "Analyst#2026")
     # Create a simulation run and optimization plan so the test is self-contained
