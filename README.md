@@ -31,12 +31,23 @@ Open the [live demo][demo] and go to [Sign in][login]. The frontend or API can t
 after inactivity on Render's free tier. The [backend health check][health] shows when the API is
 responding. [Render free-tier behavior](https://render.com/docs/free#spinning-down-on-idle)
 
+| Service | Link |
+| --- | --- |
+| Live website | [symbiotic-city-web.onrender.com][demo] |
+| Backend API | [symbiotic-city-api.onrender.com][api] |
+| Backend health check | [API health][health] |
+| Frontend proxy health | [Proxy health][proxy-health] |
+| API documentation | [Swagger / OpenAPI][api-docs] |
+
 ### 2. Sign in with a synthetic demo account
 
 | Role | Email | Demo password | Start here |
 | --- | --- | --- | --- |
+| **Super Admin** | `admin@symbiotic.city` | `Admin#2026` | Use the [user administration][users] and [audit log][audit] pages. |
+| **City Operator** | `operator@symbiotic.city` | `Operator#2026` | Use [Incidents][incidents], [Workflows][workflows], and [Tasks][tasks] for coordination and approvals. |
 | **City Analyst** | `analyst@symbiotic.city` | `Analyst#2026` | Recommended for the [dashboard][dashboard], [3D twin][twin], AI responses, [A02 preview](#5-verify-a02-without-saving-a-plan), and workflow history. |
 | **Field Engineer** | `engineer@symbiotic.city` | `Engineer#2026` | Open [My Assigned Tasks][my-tasks] to inspect the field workspace and task details. |
+| **Field Engineer 2** | `engineer2@symbiotic.city` | `Engineer#2026` | A second field account for reviewing task assignment and role-based access. |
 
 These accounts use shared synthetic data. Use the live site for browsing, read-only AI requests, and
 **Preview solve**. Watch the video for approval and fault recovery, or use an
@@ -582,8 +593,30 @@ scripts/             Development, seeding, verification, and smoke commands
 
 ## Project links
 
-- [Live application][demo] · [Competition video][video] · [GitHub repository][repo] ·
-  [Backend health][health]
+### Live deployment and resources
+
+| Resource | Link |
+| --- | --- |
+| Live application | [symbiotic-city-web.onrender.com][demo] |
+| Backend API | [symbiotic-city-api.onrender.com][api] |
+| Backend health check | [API health][health] |
+| Frontend proxy health | [Proxy health][proxy-health] |
+| API documentation | [Swagger / OpenAPI][api-docs] |
+| GitHub repository | [meherabmehu/symbiotic-city][repo] |
+| YouTube demonstration | [Watch the competition video][video] |
+
+### Direct feature links
+
+| Feature | Link |
+| --- | --- |
+| Dashboard and AI Copilot | [Open dashboard][dashboard] |
+| Interactive 3D City | [Open city twin][twin] |
+| Failure Simulation | [Open simulation lab][simulation] |
+| A02 AI Optimization | [Open optimization][optimization] |
+| A07 Recovery Workflows | [Open workflows][workflows] |
+| Resilience Intelligence | [Open resilience intelligence][resilience] |
+| Incident Management | [Open incidents][incidents] |
+| Analytics and Reports | [Open analytics][analytics] |
 - [Competition evidence matrix](docs/COMPETITION_MATRIX.md) · [Architecture](docs/ARCHITECTURE.md) ·
   [API reference](docs/API.md) · [Model assumptions](docs/MODELS.md)
 - [Detailed setup](docs/SETUP.md) · [Demo script](docs/DEMO_SCRIPT.md) ·
@@ -592,7 +625,9 @@ scripts/             Development, seeding, verification, and smoke commands
 [demo]: https://symbiotic-city-web.onrender.com
 [video]: https://youtu.be/ITBUDKEcit0
 [repo]: https://github.com/meherabmehu/symbiotic-city
+[api]: https://symbiotic-city-api.onrender.com
 [health]: https://symbiotic-city-api.onrender.com/api/health
+[proxy-health]: https://symbiotic-city-web.onrender.com/api/health
 [api-docs]: https://symbiotic-city-api.onrender.com/api/docs
 [login]: https://symbiotic-city-web.onrender.com/login
 [dashboard]: https://symbiotic-city-web.onrender.com/dashboard
