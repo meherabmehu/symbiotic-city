@@ -1,0 +1,476 @@
+1
+00:00:00,650 --> 00:00:05,007
+SYMBIOTIC CITY — self-healing urban intelligence, built for the World Problem Solver
+
+2
+00:00:05,057 --> 00:00:09,414
+track. This is the complete platform walkthrough, including both advanced
+
+3
+00:00:09,464 --> 00:00:13,822
+challenges: intelligent optimization, and automated multi-step workflow. Every AI
+
+4
+00:00:13,872 --> 00:00:18,230
+assistant you will see runs live on the Groq inference network.
+
+5
+00:00:20,730 --> 00:00:25,190
+Aurora Vale is a synthetic city. Infrastructure fails in chains — one trip cascades
+
+6
+00:00:25,240 --> 00:00:29,699
+into hospitals, water supply, and thousands of residents. This platform answers two
+
+7
+00:00:29,750 --> 00:00:34,210
+questions: how far does a failure spread, and what do we fix first?
+
+8
+00:00:36,380 --> 00:00:40,517
+The answer is SYMBIOTIC CITY: one command surface over a live digital twin, a
+
+9
+00:00:40,567 --> 00:00:44,705
+deterministic cascade simulator, OR-Tools recovery optimisation, automated recovery
+
+10
+00:00:44,755 --> 00:00:48,892
+workflows, four-role authorisation and operational analytics — every layer reading
+
+11
+00:00:48,942 --> 00:00:53,080
+the same audited database.
+
+12
+00:00:55,529 --> 00:00:59,226
+Every screen behind this wall is role-protected. We sign in as the City Operator —
+
+13
+00:00:59,276 --> 00:01:02,973
+one of four roles with server-enforced permissions. This session runs on an
+
+14
+00:01:03,023 --> 00:01:06,719
+isolated, freshly seeded demo database.
+
+15
+00:01:08,169 --> 00:01:11,786
+The dashboard is the live command surface: city health index, zone status, active
+
+16
+00:01:11,836 --> 00:01:15,453
+incidents and recovery progress. Every number is served from the platform database —
+
+17
+00:01:15,503 --> 00:01:19,119
+nothing on this screen is mocked.
+
+18
+00:01:21,389 --> 00:01:25,557
+The digital twin renders all twenty-three assets and twenty-five dependency links as
+
+19
+00:01:25,607 --> 00:01:29,774
+a live 3-D scene. Camera presets frame the whole city — isometric, top-down,
+
+20
+00:01:29,824 --> 00:01:33,992
+perspective — and dragging orbits around the model. Colour is live status: mint
+
+21
+00:01:34,042 --> 00:01:38,209
+operational, amber degraded, coral failed.
+
+22
+00:01:39,439 --> 00:01:43,376
+We select the Aurora Vale Generating Station. The panel opens with capacity, zone,
+
+23
+00:01:43,426 --> 00:01:47,363
+criticality rank, and its dependency fan-out — the upstream feeders, and every
+
+24
+00:01:47,413 --> 00:01:51,349
+downstream customer that relies on it.
+
+25
+00:01:53,639 --> 00:01:57,744
+This dependency graph is the foundation of everything else: simulation,
+
+26
+00:01:57,794 --> 00:02:01,899
+optimization, and the recovery workflow all read the same model you are looking at.
+
+27
+00:02:04,439 --> 00:02:08,044
+And the scene reports its own cost — two hundred ninety-one meshes, live draw calls
+
+28
+00:02:08,094 --> 00:02:11,699
+and frames per second. Measured, not claimed.
+
+29
+00:02:14,150 --> 00:02:18,729
+The assets live as data in the infrastructure registry — searchable, filterable,
+
+30
+00:02:18,780 --> 00:02:23,359
+with zones, priorities and dependency links. Every change is audited.
+
+31
+00:02:24,810 --> 00:02:28,723
+The City Copilot answers operational questions in plain language, grounded in the
+
+32
+00:02:28,773 --> 00:02:32,686
+same audited database every screen reads. We ask: what is PS-zero-one? — a real
+
+33
+00:02:32,736 --> 00:02:36,650
+question, typed into the live deployment.
+
+34
+00:02:37,359 --> 00:02:41,843
+The reply carries the live LLM Groq badge: the Vale Central Power Station —
+
+35
+00:02:41,893 --> 00:02:46,376
+operational, rank two, and the consequence of losing it: twelve downstream assets
+
+36
+00:02:46,426 --> 00:02:50,909
+and sixteen thousand residents. Every claim cites its source records.
+
+37
+00:02:54,310 --> 00:02:58,007
+The AI Disaster Commander coordinates the response. If the generating station fails,
+
+38
+00:02:58,057 --> 00:03:01,754
+the panel computes the cascade first — twelve failed assets, eighteen thousand four
+
+39
+00:03:01,805 --> 00:03:05,502
+hundred residents at risk — then live Groq narrates the situation and the priority
+
+40
+00:03:05,552 --> 00:03:09,250
+actions.
+
+41
+00:03:12,210 --> 00:03:16,403
+Multi-scenario AI reasoning compares PS-zero-one against SS-zero-one through
+
+42
+00:03:16,453 --> 00:03:20,646
+read-only cascade maths — then live Groq narrates the trade-off: PS-zero-one
+
+43
+00:03:20,696 --> 00:03:24,890
+dominates every metric, with eleven thousand more residents affected.
+
+44
+00:03:28,110 --> 00:03:32,052
+The Failure Simulation Lab is where operators rehearse disasters. We inject a fault
+
+45
+00:03:32,102 --> 00:03:36,045
+at the generating station and its substation, then run the cascade: breadth-first
+
+46
+00:03:36,095 --> 00:03:40,037
+over the dependency graph, each asset scored against its redundancy envelope —
+
+47
+00:03:40,087 --> 00:03:44,030
+deterministic, seeded, reproducible.
+
+48
+00:03:44,860 --> 00:03:48,752
+In production, describing a failure in natural language is enough: the live Groq
+
+49
+00:03:48,802 --> 00:03:52,694
+extraction parses the scenario, validates it, then the deterministic engine runs it
+
+50
+00:03:52,745 --> 00:03:56,637
+— five assets failed, cascades mapped, run recorded. The model extracts; the engine
+
+51
+00:03:56,687 --> 00:04:00,579
+computes.
+
+52
+00:04:02,030 --> 00:04:05,822
+Simulation becomes accountability in incident management. We file a high-severity
+
+53
+00:04:05,872 --> 00:04:09,664
+incident against a water-treatment asset. The backend enforces one open incident per
+
+54
+00:04:09,715 --> 00:04:13,507
+asset and category, validates every transition, and records the full lifecycle from
+
+55
+00:04:13,557 --> 00:04:17,349
+report to resolution.
+
+56
+00:04:18,379 --> 00:04:21,746
+Every incident ships with a live Groq explanation: what happened, what it affects,
+
+57
+00:04:21,796 --> 00:04:25,163
+what is already being done, and what to check next — grounded strictly in the
+
+58
+00:04:25,213 --> 00:04:28,579
+incident record.
+
+59
+00:04:30,030 --> 00:04:34,606
+Now the core of advanced challenge A02 — intelligent decisions and optimization. We
+
+60
+00:04:34,656 --> 00:04:39,233
+add demand for the failed asset and let OR-Tools CP-SAT allocate it: variables are
+
+61
+00:04:39,283 --> 00:04:43,860
+reservation quantities; constraints cover capacity, mobilisation and all-or-nothing
+
+62
+00:04:43,910 --> 00:04:48,486
+service per asset; priorities drive the objective — maximize critical coverage. The
+
+63
+00:04:48,536 --> 00:04:53,113
+solver returns an explained allocation with its objective value and proven status —
+
+64
+00:04:53,163 --> 00:04:57,740
+or proves the problem infeasible.
+
+65
+00:04:59,280 --> 00:05:02,759
+It never guesses — and nothing is approved until a human decides.
+
+66
+00:05:05,210 --> 00:05:09,495
+An honest solver must also be able to say no. We add two mandatory priority-one
+
+67
+00:05:09,545 --> 00:05:13,829
+demands — the hospital and the water treatment plant — and over-constrain the
+
+68
+00:05:13,880 --> 00:05:18,165
+request, then solve. The live CP-SAT preview proves the model infeasible: total
+
+69
+00:05:18,215 --> 00:05:22,500
+demand exceeds total resource capacity.
+
+70
+00:05:23,860 --> 00:05:28,050
+Persisted, the plan page states exactly why nothing can be approved — and no
+
+71
+00:05:28,100 --> 00:05:32,290
+allocation is invented. The safe correction is constraint relief: we re-solve the
+
+72
+00:05:32,340 --> 00:05:36,530
+same demands without the artificial overload, and the solver recovers a full
+
+73
+00:05:36,580 --> 00:05:40,770
+feasible allocation. An honest no is decision support too.
+
+74
+00:05:42,220 --> 00:05:47,453
+Explainable recovery intelligence turns a saved plan into a grounded briefing. Live
+
+75
+00:05:47,503 --> 00:05:52,736
+on Groq, it explains the solver's optimality verdict, the limiting resources, and
+
+76
+00:05:52,786 --> 00:05:58,020
+runs read-only alternative CP-SAT strategies — comparison only, no database changes.
+
+77
+00:05:58,870 --> 00:06:04,259
+Every alternative the solver proved feasible — comparison only, no database changes.
+
+78
+00:06:06,220 --> 00:06:10,939
+Resource management is the allocator's inventory: crews, equipment and materials
+
+79
+00:06:10,990 --> 00:06:15,709
+with statuses, home zones and costs — the records CP-SAT drew from.
+
+80
+00:06:17,160 --> 00:06:20,939
+Dispatch turns approved plans into repair tasks, with object-level authorization —
+
+81
+00:06:20,990 --> 00:06:24,769
+an engineer sees only the tasks assigned to them.
+
+82
+00:06:26,220 --> 00:06:30,834
+Advanced challenge A07 — automated multi-step workflow. For the incident we reported
+
+83
+00:06:30,884 --> 00:06:35,497
+earlier, we start a real recovery workflow: the engine runs the automatic steps —
+
+84
+00:06:35,548 --> 00:06:40,161
+record, validate, cascade simulation, constrained planning — then stops at the human
+
+85
+00:06:40,212 --> 00:06:44,826
+approval gate. Validated transitions, idempotent retries, compensation for failures,
+
+86
+00:06:44,876 --> 00:06:49,490
+and an append-only ledger for every step.
+
+87
+00:06:52,170 --> 00:06:56,290
+The approval gate is the point: nothing advances until a human decides.
+
+88
+00:06:58,740 --> 00:07:03,292
+Now the part most demos hide: partial failure. We report a fresh incident on camera,
+
+89
+00:07:03,342 --> 00:07:07,895
+start a real workflow, and arm a controlled fault at the reservation step. The
+
+90
+00:07:07,944 --> 00:07:12,497
+engine runs the automatic steps, we approve the plan as the human gate — and the
+
+91
+00:07:12,547 --> 00:07:17,100
+fault fires mid-transaction: resources are partially reserved when the step dies.
+
+92
+00:07:18,189 --> 00:07:21,747
+The console shows exactly what happened: five steps traceable, the failed step
+
+93
+00:07:21,797 --> 00:07:25,355
+identified, and compensation applied — every capacity hold created by the attempt
+
+94
+00:07:25,404 --> 00:07:28,962
+was released before the failure was recorded, so a retry cannot double-book
+
+95
+00:07:29,012 --> 00:07:32,569
+capacity.
+
+96
+00:07:34,389 --> 00:07:39,199
+The operator retries: the reservation is recreated cleanly, the workflow advances to
+
+97
+00:07:39,250 --> 00:07:44,060
+awaiting field, and the attempt count is visible. Nothing was silently half-applied.
+
+98
+00:07:45,509 --> 00:07:49,447
+Field engineers accept and complete the dispatched repairs, the operator verifies
+
+99
+00:07:49,497 --> 00:07:53,435
+them, and the recovered workflow reaches its terminal state — incident resolved, ten
+
+100
+00:07:53,485 --> 00:07:57,423
+of ten steps complete, every event in the ledger. Partial completion is the danger
+
+101
+00:07:57,473 --> 00:08:01,411
+in infrastructure recovery; this platform treats it as a first-class case, not an
+
+102
+00:08:01,461 --> 00:08:05,399
+edge case.
+
+103
+00:08:06,849 --> 00:08:10,969
+Resilience intelligence turns the platform's own figures into an executive brief —
+
+104
+00:08:11,019 --> 00:08:15,139
+live on Groq, every figure traced to the records, nothing invented.
+
+105
+00:08:17,949 --> 00:08:22,329
+Analytics completes the loop with response times, task throughput and utilisation
+
+106
+00:08:22,379 --> 00:08:26,759
+trends — measured from stored records, exportable for reporting.
+
+107
+00:08:28,209 --> 00:08:30,379
+Notifications keep every role informed as incidents escalate and recoveries
+
+108
+00:08:30,430 --> 00:08:32,600
+complete.
+
+109
+00:08:34,049 --> 00:08:38,710
+Administration closes the loop: user management, the role and permission matrix, and
+
+110
+00:08:38,759 --> 00:08:43,420
+an append-only audit log — who did what, when, with what outcome.
+
+111
+00:08:44,870 --> 00:08:48,827
+The platform documents its own assumptions and limits: the cascade is a steady-state
+
+112
+00:08:48,877 --> 00:08:52,835
+screening model, dependency weights are curated estimates, and results are decision
+
+113
+00:08:52,884 --> 00:08:56,842
+support, not validated predictions. Aurora Vale is synthetic — and the product says
+
+114
+00:08:56,892 --> 00:09:00,850
+so, everywhere it matters.
+
+115
+00:09:03,299 --> 00:09:08,121
+SYMBIOTIC CITY brings deterministic simulation, CP-SAT optimization and grounded AI
+
+116
+00:09:08,171 --> 00:09:12,993
+into one audited decision loop — every assistant in this cut answered live on the
+
+117
+00:09:13,043 --> 00:09:17,865
+Groq inference network. Humans approve every consequential action, partial failures
+
+118
+00:09:17,915 --> 00:09:22,737
+are compensated and retried safely, and every result is reproducible from the seeded
+
+119
+00:09:22,788 --> 00:09:27,610
+dataset. Infrastructure fails in chains. Recovery should be planned that way.
+
