@@ -191,6 +191,16 @@ def _lang_instruction(lang: str) -> str:
     return "Answer in Bengali (বাংলা)." if lang == "bn" else "Answer in English."
 
 
+def _no_model_label() -> str:
+    """Label for deterministic replies the model was never asked to write.
+
+    With no key configured this is the honest 'no key' label; with a key
+    present, blaming a missing key would send an operator looking for a
+    configuration that exists.
+    """
+    return provider_label(has_key=False) if get_provider() is None else "rule-based (deterministic response)"
+
+
 # ------------------------------------------------------------------ copilot
 
 _COPILOT_BASE = ("analytics:read", "twin:read", "resilience:read")
@@ -572,8 +582,14 @@ async def extract_whatif(
         "validation": {"ok": not problems, "problems": problems},
     }
     if problems:
+        if parsed_by == "llm":
+            validation_label = provider_label(has_key=True)
+        else:
+            # Parsed deterministically: either no key exists, or the model was
+            # asked and failed -- say which, don't blame a missing key.
+            validation_label = _no_model_label()
         return ok({**base, "scenario": None, "observation": None, "reply": None,
-                   "provider": provider_label(has_key=(parsed_by == "llm"))})
+                   "provider": validation_label})
 
     scenario = whatif_service.create_scenario(
         db,
@@ -1010,7 +1026,7 @@ async def disaster_commander(
             {
                 "reply": msg,
                 "lang": payload.lang,
-                "provider": provider_label(has_key=False),
+                "provider": _no_model_label(),
                 "truncated": False,
                 "notice": None,
                 "resolution": resolution,
@@ -1152,7 +1168,7 @@ async def compare_scenarios_ai(
                 {
                     "reply": "Please specify at least two valid asset codes to compare (for example: 'Compare PS-01 vs SS-01').",
                     "lang": payload.lang,
-                    "provider": provider_label(has_key=False),
+                    "provider": _no_model_label(),
                     "truncated": False,
                     "notice": None,
                     "scenarios": [],
