@@ -49,6 +49,11 @@ export default defineConfig({
       use: { ...devices["Pixel 7"] },
       testMatch: /responsive\.spec\.ts/,
     },
+    {
+      name: "tablet",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 } },
+      testMatch: /responsive\.spec\.ts/,
+    },
   ],
   webServer: process.env.E2E_BASE_URL
     ? undefined
