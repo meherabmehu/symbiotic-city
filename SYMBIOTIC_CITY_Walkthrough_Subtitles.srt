@@ -1,0 +1,304 @@
+1
+00:00:00,950 --> 00:00:04,969
+SYMBIOTIC CITY. A self-healing urban intelligence platform — from cascading failure
+
+2
+00:00:05,019 --> 00:00:09,039
+to coordinated recovery. Here is the full walkthrough.
+
+3
+00:00:11,790 --> 00:00:15,664
+SYMBIOTIC CITY models the fictional city of Aurora Vale. Every asset, incident and
+
+4
+00:00:15,714 --> 00:00:19,589
+resident count you will see is synthetic demonstration data. The platform answers
+
+5
+00:00:19,640 --> 00:00:23,515
+two questions every control room asks: how far does a failure spread, and what do we
+
+6
+00:00:23,564 --> 00:00:27,439
+fix first with what we have.
+
+7
+00:00:29,789 --> 00:00:32,923
+Everything is protected by role-based authentication. We sign in as the City
+
+8
+00:00:32,973 --> 00:00:36,106
+Operator — one of four demo roles, each with strictly different, server-enforced
+
+9
+00:00:36,156 --> 00:00:39,289
+permissions.
+
+10
+00:00:41,639 --> 00:00:45,046
+The dashboard is the live command surface: asset health, zone status, open incidents
+
+11
+00:00:45,096 --> 00:00:48,503
+and recovery progress, all served from the platform's database. Nothing on this
+
+12
+00:00:48,553 --> 00:00:51,959
+screen is mocked.
+
+13
+00:00:55,489 --> 00:00:59,991
+The digital twin renders all twenty-three modelled assets and twenty-five dependency
+
+14
+00:01:00,041 --> 00:01:04,542
+links as an interactive 3D scene. Camera presets frame the whole city, and dragging
+
+15
+00:01:04,592 --> 00:01:09,093
+orbits the view. Color is live status: operational, degraded, failed, in
+
+16
+00:01:09,143 --> 00:01:13,644
+maintenance, or recovering. Selecting the Aurora Vale Generating Station opens its
+
+17
+00:01:13,694 --> 00:01:18,196
+detail panel — capacity, dependencies, and the downstream assets that rely on it.
+
+18
+00:01:18,246 --> 00:01:22,747
+This dependency graph is the foundation every other feature reasons about:
+
+19
+00:01:22,797 --> 00:01:27,298
+simulation, optimization and the recovery workflow all read from it, so what you see
+
+20
+00:01:27,348 --> 00:01:31,849
+here is exactly what the rest of the platform computes against.
+
+21
+00:01:41,689 --> 00:01:45,894
+The twin is also the incident map: failed and recovering assets stand out on the
+
+22
+00:01:45,944 --> 00:01:50,149
+model, and stored cascade runs can be replayed here step by step.
+
+23
+00:02:06,689 --> 00:02:10,706
+Status is colour and shape — every asset carries a marker, so the model stays
+
+24
+00:02:10,756 --> 00:02:14,773
+readable even in monochrome. And the scene reports its own cost: meshes, draw calls,
+
+25
+00:02:14,823 --> 00:02:18,839
+and frames per second. Measured, not claimed.
+
+26
+00:02:31,190 --> 00:02:34,830
+The infrastructure catalogue manages the same assets as data — searchable,
+
+27
+00:02:34,880 --> 00:02:38,520
+filterable, with categories, zones and dependency records. Every change is written
+
+28
+00:02:38,570 --> 00:02:42,210
+to an audit trail.
+
+29
+00:02:44,560 --> 00:02:49,180
+The City Copilot answers operational questions in plain language. We ask which
+
+30
+00:02:49,230 --> 00:02:53,849
+assets are most critical in Aurora Vale. Every reply is grounded and labelled: this
+
+31
+00:02:53,900 --> 00:02:58,520
+one comes from the deterministic rule engine — instant, no LLM key required. With a
+
+32
+00:02:58,570 --> 00:03:03,189
+Groq key configured, the same panel upgrades to large-language-model responses.
+
+33
+00:03:10,380 --> 00:03:15,132
+Switch to the AI Disaster Commander and the panel becomes an incident coordinator.
+
+34
+00:03:15,182 --> 00:03:19,933
+We ask: if the generating station fails, what infrastructure is affected, and what
+
+35
+00:03:19,984 --> 00:03:24,736
+should we prioritize? The commander runs the real cascade engine and the CP-SAT
+
+36
+00:03:24,786 --> 00:03:29,538
+allocator, then reports population impact, affected assets and prioritized actions —
+
+37
+00:03:29,588 --> 00:03:34,340
+with direct links into simulation, optimization and the twin.
+
+38
+00:03:36,690 --> 00:03:40,800
+Multi-scenario comparison runs two failure hypotheses side by side through the same
+
+39
+00:03:40,850 --> 00:03:44,960
+deterministic cascade mathematics. One column per scenario — and the AI layer adds a
+
+40
+00:03:45,010 --> 00:03:49,120
+plain-language trade-off analysis with twin highlights. Every number is computed by
+
+41
+00:03:49,170 --> 00:03:53,280
+the platform; the language model only narrates it.
+
+42
+00:03:55,630 --> 00:03:59,575
+The Simulation Lab is where operators rehearse failures. We inject a fault at the
+
+43
+00:03:59,625 --> 00:04:03,570
+generating station, then run the cascade: deterministic, seeded and reproducible —
+
+44
+00:04:03,620 --> 00:04:07,565
+each asset scored against its redundancy envelope. Previews run read-only; results
+
+45
+00:04:07,615 --> 00:04:11,560
+replay later on the twin.
+
+46
+00:04:13,910 --> 00:04:17,662
+Incident management turns a failure into a tracked case. We file a high-severity
+
+47
+00:04:17,712 --> 00:04:21,465
+incident for a water-treatment asset. The backend enforces one open incident per
+
+48
+00:04:21,515 --> 00:04:25,267
+asset and category, validates every status transition, and records the full
+
+49
+00:04:25,317 --> 00:04:29,069
+lifecycle from detection to resolution.
+
+50
+00:04:31,420 --> 00:04:35,516
+Now the recovery planner. We add demand for the failed asset and let OR-Tools CP-SAT
+
+51
+00:04:35,566 --> 00:04:39,662
+allocate resources under real constraints — crews, materials, mobilisation and
+
+52
+00:04:39,711 --> 00:04:43,807
+priority. The solver returns a fully explained allocation or proves the problem
+
+53
+00:04:43,858 --> 00:04:47,954
+infeasible; it never guesses. The plan persists with its objective value and solver
+
+54
+00:04:48,004 --> 00:04:52,100
+status.
+
+55
+00:04:54,449 --> 00:04:58,673
+Every plan ships with explainable recovery intelligence: why each assignment was
+
+56
+00:04:58,723 --> 00:05:02,946
+made, which resources were limiting, and alternatives the solver itself proved
+
+57
+00:05:02,996 --> 00:05:07,219
+feasible. Explanations must match the solver's actual numbers.
+
+58
+00:05:09,569 --> 00:05:13,794
+Resource management tracks crews, equipment and materials with statuses, home zones
+
+59
+00:05:13,844 --> 00:05:18,069
+and costs — the inventory the allocator draws from.
+
+60
+00:05:20,420 --> 00:05:24,459
+Dispatch turns approved plans into repair tasks. Object-level authorization means an
+
+61
+00:05:24,509 --> 00:05:28,549
+engineer can only ever see the tasks assigned to them.
+
+62
+00:05:30,900 --> 00:05:35,870
+Recovery workflows orchestrate the full chain — detection, allocation, reservation,
+
+63
+00:05:35,920 --> 00:05:40,889
+dispatch, repair, verification — as audited steps with idempotent retries.
+
+64
+00:05:43,240 --> 00:05:47,040
+The Resilience Intelligence report summarizes structural risk from live records:
+
+65
+00:05:47,090 --> 00:05:50,890
+dependency hotspots, redundancy gaps and zone exposure — computed by the platform,
+
+66
+00:05:50,939 --> 00:05:54,740
+with any AI layer strictly grounded.
+
+67
+00:05:57,090 --> 00:06:01,210
+Analytics completes the picture with response times, task throughput and utilization
+
+68
+00:06:01,260 --> 00:06:05,380
+trends — all exportable for reporting. The numbers come from stored incidents, tasks
+
+69
+00:06:05,430 --> 00:06:09,550
+and reservations: measured, not estimated.
+
+70
+00:06:11,900 --> 00:06:13,965
+Notifications keep every role informed as incidents escalate and recoveries
+
+71
+00:06:14,015 --> 00:06:16,080
+complete.
+
+72
+00:06:18,430 --> 00:06:22,904
+Administration closes the loop: user management, a role and permission matrix, and a
+
+73
+00:06:22,954 --> 00:06:27,429
+complete audit log — who did what, when, and with what outcome.
+
+74
+00:06:29,780 --> 00:06:33,990
+Finally, the platform documents its own model assumptions and limits. Aurora Vale is
+
+75
+00:06:34,040 --> 00:06:38,250
+synthetic — and the product says so, everywhere it matters.
+
+76
+00:06:40,600 --> 00:06:45,730
+SYMBIOTIC CITY. Infrastructure fails in chains. Recovery should be planned that way.
+
