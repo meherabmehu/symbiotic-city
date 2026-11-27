@@ -87,6 +87,19 @@ export default function TwinPage() {
   );
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = new URLSearchParams(window.location.search).get("highlight");
+    if (!raw) return;
+    const ids = raw
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length > 0) {
+      setReplayLevels(new Map(ids.map((id) => [id, "failed"] as const)));
+    }
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
     setReducedMotion(query.matches);
